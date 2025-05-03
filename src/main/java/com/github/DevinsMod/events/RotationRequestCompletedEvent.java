@@ -1,6 +1,5 @@
 package com.github.DevinsMod.events;
 
-
 import com.github.DevinsMod.utils.RotationRequest;
 
 public class RotationRequestCompletedEvent {

@@ -4,6 +4,8 @@
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/DevinsMod.main.iml" filepath="$PROJECT_DIR$/.idea/modules/DevinsMod.main.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/DevinsMod.test.iml" filepath="$PROJECT_DIR$/.idea/modules/DevinsMod.test.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/Downloads.DevinsMod.main.iml" filepath="$PROJECT_DIR$/.idea/modules/Downloads.DevinsMod.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/Downloads.DevinsMod.test.iml" filepath="$PROJECT_DIR$/.idea/modules/Downloads.DevinsMod.test.iml" />
     </modules>
   </component>
 </project>

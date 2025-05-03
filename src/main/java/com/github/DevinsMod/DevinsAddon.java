@@ -1,6 +1,7 @@
 package com.github.DevinsMod;
 
 import com.github.DevinsMod.modules.DevinsTrader;
+import com.github.DevinsMod.modules.RotationManager;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -19,6 +20,7 @@ public class DevinsAddon extends MeteorAddon {
 
         // Modules
         Modules.get().add(new DevinsTrader());
+        Modules.get().add(new RotationManager());
     }
 
     @Override

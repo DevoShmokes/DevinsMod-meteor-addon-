@@ -10,11 +10,11 @@ import java.util.stream.StreamSupport;
 import java.util.Random;
 import java.util.stream.Collectors;
 import java.util.*;
-
+import com.github.DevinsMod.tracker.RotationManager;
 import com.github.DevinsMod.DevinsAddon;
 import com.github.DevinsMod.events.RotationRequestCompletedEvent;
-import com.github.DevinsMod.utils.RotationManager;
 import com.github.DevinsMod.utils.RotationRequest;
+import com.github.DevinsMod.utils.Utils;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.*;
 import net.minecraft.util.math.*;
@@ -46,7 +46,8 @@ import net.minecraft.screen.GenericContainerScreenHandler;
 import net.minecraft.util.hit.BlockHitResult;
 
 
-public class DevinsTrader extends Module {
+public class
+DevinsTrader extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -609,6 +610,7 @@ public class DevinsTrader extends Module {
             }
 
             mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
+            mc.setScreen(null);
             isExporting = false;
             ChatUtils.info("Exported " + deposited + " stacks of " + buyItem.get());
         }
@@ -659,7 +661,7 @@ public class DevinsTrader extends Module {
                     currentVillager,
                     mc.player.isSneaking(),
                     Hand.MAIN_HAND,
-                    getClosestPointOnBox(mc.player.getEyePos(), currentVillager.getBoundingBox())
+                    Utils.getClosestPointOnBox(mc.player.getEyePos(), currentVillager.getBoundingBox())
                 )
             );
             mc.player.networkHandler.sendPacket(
@@ -897,6 +899,7 @@ public class DevinsTrader extends Module {
         }
 
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
+        mc.setScreen(null);
         isRestocking = false;
         ChatUtils.info("✅ Restocked " + taken + " stacks of Emerald Blocks.");
     }
@@ -1011,14 +1014,6 @@ public class DevinsTrader extends Module {
             nudgeTicksRemaining = nudgeDuration;
             nudgeElapsed = 0;
         }
-    }
-
-
-    public static Vec3d getClosestPointOnBox(Vec3d point, Box box) {
-        double x = Math.max(box.minX, Math.min(box.maxX, point.x));
-        double y = Math.max(box.minY, Math.min(box.maxY, point.y));
-        double z = Math.max(box.minZ, Math.min(box.maxZ, point.z));
-        return new Vec3d(x, y, z);
     }
 
 }

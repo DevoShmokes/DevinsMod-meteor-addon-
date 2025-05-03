@@ -1,12 +1,16 @@
-package com.github.DevinsMod.utils;
+package com.github.DevinsMod.tracker;
 
 import java.util.List;
 import java.util.ArrayList;
 import baritone.api.BaritoneAPI;
+import com.github.DevinsMod.events.UpdateVelocityEvent;
+import com.github.DevinsMod.utils.RotationRequest;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.MathHelper;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
+
+
 import java.util.concurrent.CopyOnWriteArrayList;
 import meteordevelopment.meteorclient.pathing.BaritoneUtils;
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -31,6 +35,17 @@ public class RotationManager {
         }
     }
 
+
+    @EventHandler
+    public static void onUpdateVelocity(UpdateVelocityEvent event) {
+        if (!(BaritoneUtils.IS_AVAILABLE && BaritoneAPI.getProvider().getPrimaryBaritone().getPathingBehavior().isPathing())) {
+            RotationRequest rotation = RotationManager.getRotationRequest();
+            if (rotation != null) {
+                event.cancel();
+                event.setVelocity(RotationManager.movementInputToVelocity(rotation.getRotation()[0], event.getMovementInput(), event.getSpeed()));
+            }
+        }
+    }
 
 
     private static Vec3d movementInputToVelocity(float yaw, Vec3d movementInput, float speed) {
