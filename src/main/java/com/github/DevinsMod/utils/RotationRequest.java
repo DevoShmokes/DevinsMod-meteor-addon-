@@ -5,23 +5,15 @@ import com.github.DevinsMod.modules.RotationManager;
 import lombok.Getter;
 import lombok.Setter;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import net.minecraft.block.WallMountedBlock;
 import net.minecraft.entity.Entity;
 import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
+
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class RotationRequest {
-
-    public enum RotationType {
-        VEC3D,
-        RAW_INPUTS,
-        CLOSEST_POINT_ON_BOX,
-        DIRECTION,
-        TARGET
-    }
 
     @Getter
     private final int priority;
@@ -38,9 +30,6 @@ public class RotationRequest {
     @Getter
     @Setter
     private boolean movementFix = true;
-
-
-
     public RotationRequest(int priority, boolean isActive) {
         this.priority = priority;
         this.isActive = isActive;
@@ -62,7 +51,8 @@ public class RotationRequest {
             case DIRECTION:
                 return getRotationFromDirection(direction);
             case TARGET:
-                if (target == null || target.getBoundingBox() == null) return new float[]{mc.player.getYaw(), mc.player.getPitch()};
+                if (target == null || target.getBoundingBox() == null)
+                    return new float[]{mc.player.getYaw(), mc.player.getPitch()};
                 return getRotationFromBox(target.getBoundingBox());
             default:
                 throw new IllegalArgumentException("Invalid rotation type");
@@ -70,7 +60,7 @@ public class RotationRequest {
     }
 
     public float[] getRotationFromVec3d(Vec3d target) {
-        Vec3d cameraPos = Utils.getEyePos();
+        Vec3d cameraPos = mc.player.getEyePos();
         Vec3d direction = target.subtract(cameraPos);
         float yaw = (float) (MathHelper.atan2(direction.z, direction.x) * (180 / Math.PI)) - 90;
         float pitch = (float) -(MathHelper.atan2(direction.y, MathHelper.sqrt((float) (direction.x * direction.x + direction.z * direction.z))) * (180 / Math.PI));
@@ -78,7 +68,7 @@ public class RotationRequest {
     }
 
     public float[] getRotationFromBox(Box box) {
-        Vec3d cameraPos = Utils.getEyePos();
+        Vec3d cameraPos = mc.player.getEyePos();
         Vec3d closestPoint = Utils.getClosestPointOnBox(cameraPos, box);
         return getRotationFromVec3d(closestPoint);
     }
@@ -88,29 +78,18 @@ public class RotationRequest {
         return getRotationFromVec3d(mc.player.getEyePos().add(target));
     }
 
-    public void setRawInputs(float yaw, float pitch) {
-        rawYaw = yaw;
-        rawPitch = pitch;
-        type = RotationType.RAW_INPUTS;
-    }
-
-    public void setBox(Box box) {
-        this.box = box;
-        type = RotationType.CLOSEST_POINT_ON_BOX;
-    }
-
     public void setTarget(Entity target) {
         this.target = target;
         type = RotationType.TARGET;
     }
 
-    public void setVec3d(Vec3d vec3d) {
-        this.vec3d = vec3d;
-        type = RotationType.VEC3D;
+
+    public enum RotationType {
+        VEC3D,
+        RAW_INPUTS,
+        CLOSEST_POINT_ON_BOX,
+        DIRECTION,
+        TARGET
     }
 
-    public void setDirection(Direction direction) {
-        this.direction = direction;
-        type = RotationType.DIRECTION;
-    }
 }

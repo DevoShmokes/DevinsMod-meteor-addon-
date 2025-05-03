@@ -1,25 +1,13 @@
 package com.github.DevinsMod.modules;
 
-
-/*
-  @Author: Devin
- * @Author: EBS
- * */
-
-import java.util.stream.StreamSupport;
-import java.util.Random;
-import java.util.stream.Collectors;
-import java.util.*;
-import com.github.DevinsMod.tracker.RotationManager;
+import baritone.api.BaritoneAPI;
+import baritone.api.pathing.goals.Goal;
+import baritone.api.pathing.goals.GoalNear;
 import com.github.DevinsMod.DevinsAddon;
 import com.github.DevinsMod.events.RotationRequestCompletedEvent;
+import com.github.DevinsMod.tracker.RotationManager;
 import com.github.DevinsMod.utils.RotationRequest;
 import com.github.DevinsMod.utils.Utils;
-import net.minecraft.item.ItemStack;
-import net.minecraft.network.packet.c2s.play.*;
-import net.minecraft.util.math.*;
-import net.minecraft.village.VillagerProfession;
-import baritone.api.pathing.goals.Goal;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -29,21 +17,29 @@ import net.minecraft.client.gui.screen.ingame.MerchantScreen;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.passive.VillagerEntity;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.play.*;
 import net.minecraft.registry.Registries;
+import net.minecraft.screen.GenericContainerScreenHandler;
 import net.minecraft.screen.MerchantScreenHandler;
+import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.village.TradeOffer;
 import net.minecraft.village.TradeOfferList;
+import net.minecraft.village.VillagerProfession;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.pathing.goals.GoalNear;
-import net.minecraft.screen.PlayerScreenHandler;
-import net.minecraft.screen.GenericContainerScreenHandler;
-import net.minecraft.util.hit.BlockHitResult;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 
 public class
@@ -57,72 +53,42 @@ DevinsTrader extends Module {
         .defaultValue(false)
         .build()
     );
-
-    public enum Profession {
-        ARMORER("armorer"),
-        BUTCHER("butcher"),
-        CARTOGRAPHER("cartographer"),
-        CLERIC("cleric"),
-        FARMER("farmer"),
-        FISHERMAN("fisherman"),
-        FLETCHER("fletcher"),
-        LEATHERWORKER("leatherworker"),
-        LIBRARIAN("librarian"),
-        MASON("mason"),
-        SHEPHERD("shepherd"),
-        TOOLSMITH("toolsmith");
-
-        private final String id;
-        Profession(String id) { this.id = id; }
-        public String getId() { return id; }
-    }
-
     private final Setting<Boolean> debugChat = sgGeneral.add(new BoolSetting.Builder()
         .name("debug-chat")
         .description("Enable verbose debug messages in chat.")
         .defaultValue(false)
         .build()
     );
-
     private final Setting<Profession> targetProfession = sgGeneral.add(new EnumSetting.Builder<Profession>()
         .name("profession")
         .description("Which villager profession to path to when using Baritone.")
         .defaultValue(Profession.CLERIC)
         .build()
     );
-
     private final Setting<Boolean> waitForBaritoneFinish = sgGeneral.add(new BoolSetting.Builder()
         .name("wait-for-baritone-finish")
         .description("When using Baritone, wait until it finishes pathing before interacting.")
         .defaultValue(false)
         .build()
     );
-
-    private void log(String message) {
-        if (debugChat.get()) ChatUtils.info(message);
-    }
     private final Setting<Boolean> enableBuy = sgGeneral.add(new BoolSetting.Builder()
         .name("enable-buy")
         .description("Enable buying items from villagers.")
         .defaultValue(true)
         .build()
     );
-
     private final Setting<String> buyItem = sgGeneral.add(new StringSetting.Builder()
         .name("buy-item")
         .description("Item name to buy.")
         .defaultValue("experience_bottle")
         .build()
     );
-
     private final Setting<Boolean> enableNudgeLogic = sgGeneral.add(new BoolSetting.Builder()
         .name("enable-nudge-logic")
         .description("Toggle Baritone’s nudge-when-stuck logic on or off")
         .defaultValue(true)
         .build()
     );
-
-
     private final Setting<Double> interactionDelay = sgGeneral.add(new DoubleSetting.Builder()
         .name("interaction-delay")
         .description("Delay in ticks after a villager interaction before the next.")
@@ -131,7 +97,6 @@ DevinsTrader extends Module {
         .max(20)
         .build()
     );
-
     private final Setting<Double> maxInteractionsPerTick = sgGeneral.add(new DoubleSetting.Builder()
         .name("max-interactions-per-tick")
         .description("Max villagers to interact with per tick.")
@@ -140,7 +105,6 @@ DevinsTrader extends Module {
         .max(10)
         .build()
     );
-
     private final Setting<Integer> scanMaxRange = sgGeneral.add(new IntSetting.Builder()
         .name("scan-max-range")
         .description("Maximum horizontal blocks to search villagers.")
@@ -148,7 +112,6 @@ DevinsTrader extends Module {
         .min(1).max(256)
         .build()
     );
-
     private final Setting<Double> interactionRange = sgGeneral.add(new DoubleSetting.Builder()
         .name("interaction-range")
         .description("Max distance to interact with villagers.")
@@ -157,7 +120,6 @@ DevinsTrader extends Module {
         .max(6.0)
         .build()
     );
-
     private final Setting<Integer> maxSpendPerTrade = sgGeneral.add(new IntSetting.Builder()
         .name("max-spend-per-trade")
         .description("Skip any trade costing more emeralds than this")
@@ -166,7 +128,6 @@ DevinsTrader extends Module {
         .max(64)
         .build()
     );
-
     private final Setting<Integer> minEmeralds = sgGeneral.add(new IntSetting.Builder()
         .name("min-emeralds")
         .description("Disable if you have fewer than this many emeralds.")
@@ -175,49 +136,42 @@ DevinsTrader extends Module {
         .max(999)
         .build()
     );
-
     private final Setting<Integer> chestX = sgGeneral.add(new IntSetting.Builder()
         .name("restock-chest-x")
         .description("X coord of your restock chest")
         .defaultValue(0)
         .build()
     );
-
     private final Setting<Integer> chestY = sgGeneral.add(new IntSetting.Builder()
         .name("restock-chest-y")
         .description("Y coord of your restock chest")
         .defaultValue(64)
         .build()
     );
-
     private final Setting<Integer> chestZ = sgGeneral.add(new IntSetting.Builder()
         .name("restock-chest-z")
         .description("Z coord of your restock chest")
         .defaultValue(0)
         .build()
     );
-
     private final Setting<Integer> exportChestX = sgGeneral.add(new IntSetting.Builder()
         .name("export-chest-x")
         .description("X coord of your export chest")
         .defaultValue(1)
         .build()
     );
-
     private final Setting<Integer> exportChestY = sgGeneral.add(new IntSetting.Builder()
         .name("export-chest-y")
         .description("Y coord of your export chest")
         .defaultValue(64)
         .build()
     );
-
     private final Setting<Integer> exportChestZ = sgGeneral.add(new IntSetting.Builder()
         .name("export-chest-z")
         .description("Z coord of your export chest")
         .defaultValue(1)
         .build()
     );
-
     private final Setting<Integer> exportThreshold = sgGeneral.add(new IntSetting.Builder()
         .name("export-threshold")
         .description("When you have this many buyItems, export to chest")
@@ -225,36 +179,38 @@ DevinsTrader extends Module {
         .min(1)
         .build()
     );
-
     private final Map<Integer, Integer> interactedVillagers = new HashMap<>();
     private final Set<Integer> tradedVillagersPermanent = new HashSet<>();
     private final int villagerCooldown = 200; // ticks
+    private final RotationRequest rotationRequest = new RotationRequest(100, false);
+    private final Random random = new Random();
+    private final int nudgeDuration = 150;
     private double tradeCooldown = 0, interactionCooldown = 0;
     private int interactionsThisTick = 0;
-    private final RotationRequest rotationRequest = new RotationRequest(100, false);
     private Entity currentVillager = null;
-    private final Random random           = new Random();
-    private int stuckTicks                = 0;
-    private BlockPos lastGoalPos          = null;
+    private int stuckTicks = 0;
+    private BlockPos lastGoalPos = null;
     private int stuckAttempts = 0;
     private int currentYLevel = 0;
-    private Vec3d lastPlayerPos           = Vec3d.ZERO;
-    private final int nudgeDuration = 150;
+    private Vec3d lastPlayerPos = Vec3d.ZERO;
     private int nudgeTicksRemaining = 0;
     private int nudgeElapsed = 0;
-    private boolean isRestocking   = false;
+    private boolean isRestocking = false;
     private boolean hasOpenedChest = false;
-    private boolean isExporting        = false;
+    private boolean isExporting = false;
     private boolean hasOpenedExportChest = false;
     private int tradeScreenOpenTicks = 0;
     private boolean awaitingExportChestOpen = false;
-    private int exportChestOpenTicks =   0;
-    private int restockChestOpenTicks =  0;
-    private Integer firstVillagerId    = null;
-    private Vec3d   firstVillagerPos   = null;
-
+    private int exportChestOpenTicks = 0;
+    private int restockChestOpenTicks = 0;
+    private Integer firstVillagerId = null;
+    private Vec3d firstVillagerPos = null;
     public DevinsTrader() {
         super(DevinsAddon.CATEGORY, "DevinsTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
+    }
+
+    private void log(String message) {
+        if (debugChat.get()) ChatUtils.info(message);
     }
 
     @Override
@@ -273,7 +229,7 @@ DevinsTrader extends Module {
         nudgeTicksRemaining = 0;
         RotationManager.requests.add(rotationRequest);
 
-        firstVillagerId  = null;
+        firstVillagerId = null;
         firstVillagerPos = null;
 
         if (useBaritone.get()) {
@@ -314,7 +270,7 @@ DevinsTrader extends Module {
         if (debugChat.get()) {
             int emeralds = mc.player.getInventory().main.stream()
                 .filter(s -> s.getItem() == Items.EMERALD).mapToInt(s -> s.getCount()).sum();
-            int blocks   = mc.player.getInventory().main.stream()
+            int blocks = mc.player.getInventory().main.stream()
                 .filter(s -> s.getItem() == Items.EMERALD_BLOCK).mapToInt(s -> s.getCount()).sum();
             log("onTick: exporting=" + isExporting
                 + " restocking=" + isRestocking
@@ -323,13 +279,13 @@ DevinsTrader extends Module {
         }
 
         if (!useBaritone.get()) {
-            isExporting  = false;
+            isExporting = false;
             isRestocking = false;
         }
 
         int have = mc.player.getInventory().main.stream()
             .filter(s -> {
-                Item it     = s.getItem();
+                Item it = s.getItem();
                 Item target = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
                 return it == target;
             })
@@ -343,7 +299,7 @@ DevinsTrader extends Module {
                 ChatUtils.error("Trade GUI open too long, closing to recover.");
                 tradeScreenOpenTicks = 0;
             } else {
-                handleMerchantScreen((MerchantScreen)mc.currentScreen);
+                handleMerchantScreen((MerchantScreen) mc.currentScreen);
             }
             return;
         } else {
@@ -392,8 +348,14 @@ DevinsTrader extends Module {
             if (!bar.getCustomGoalProcess().isActive()) checkBaritoneStuck();
         }
 
-        if (tradeCooldown > 0)      { tradeCooldown--;      return; }
-        if (interactionCooldown > 0){ interactionCooldown--;return; }
+        if (tradeCooldown > 0) {
+            tradeCooldown--;
+            return;
+        }
+        if (interactionCooldown > 0) {
+            interactionCooldown--;
+            return;
+        }
         interactedVillagers.replaceAll((id, cd) -> cd - 1);
         interactedVillagers.entrySet().removeIf(e -> e.getValue() <= 0);
 
@@ -426,7 +388,8 @@ DevinsTrader extends Module {
                 Identifier.tryParse("minecraft:" + targetProfession.get().getId())
             );
             if (prof == null) {
-                if (debugChat.get()) log("Unknown profession: " + targetProfession.get().getId() + " — skipping Baritone pathing.");
+                if (debugChat.get())
+                    log("Unknown profession: " + targetProfession.get().getId() + " — skipping Baritone pathing.");
                 return;
             }
 
@@ -471,10 +434,13 @@ DevinsTrader extends Module {
                 Vec3d center = new Vec3d(target.getX(), target.getY(), target.getZ());
                 baritone.getCustomGoalProcess().onLostControl();
                 baritone.getCustomGoalProcess().setGoalAndPath(new Goal() {
-                    @Override public boolean isInGoal(int x, int y, int z) {
+                    @Override
+                    public boolean isInGoal(int x, int y, int z) {
                         return new Vec3d(x + .5, y, z + .5).distanceTo(center) <= interactionRange.get();
                     }
-                    @Override public double heuristic(int x, int y, int z) {
+
+                    @Override
+                    public double heuristic(int x, int y, int z) {
                         return new Vec3d(x + .5, y, z + .5).distanceTo(center);
                     }
                 });
@@ -514,7 +480,7 @@ DevinsTrader extends Module {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
         bar.getCustomGoalProcess().onLostControl();
         bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, 1));
-        isExporting         = true;
+        isExporting = true;
         hasOpenedExportChest = false;
         awaitingExportChestOpen = false;
         ChatUtils.info("Exporting → walking to chest at " + pos);
@@ -539,7 +505,7 @@ DevinsTrader extends Module {
             if (useBaritone.get()) {
                 var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
                 baritone.getCustomGoalProcess().onLostControl();
-                baritone.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, (int)Math.ceil(interactionRange.get())));
+                baritone.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, (int) Math.ceil(interactionRange.get())));
                 ChatUtils.info("→ Pathing back to first villager at " + pos);
             } else {
                 log("First villager at " + pos + ". Will interact when in range.");
@@ -573,11 +539,11 @@ DevinsTrader extends Module {
             exportChestOpenTicks = 0;
         }
 
-        BlockPos pos    = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
-        Vec3d   center = Vec3d.ofCenter(pos);
+        BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
+        Vec3d center = Vec3d.ofCenter(pos);
 
         if (!hasOpenedExportChest) {
-            if (mc.player.squaredDistanceTo(center) <= 5*5) {
+            if (mc.player.squaredDistanceTo(center) <= 5 * 5) {
 
                 if (useBaritone.get()) bar.getCustomGoalProcess().onLostControl();
 
@@ -599,8 +565,8 @@ DevinsTrader extends Module {
 
         if (mc.player.currentScreenHandler instanceof GenericContainerScreenHandler chest) {
             Item target = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
-            int   syncId = chest.syncId;
-            int   deposited = 0;
+            int syncId = chest.syncId;
+            int deposited = 0;
 
             for (int i = 5; i < chest.slots.size(); i++) {
                 if (chest.slots.get(i).getStack().getItem() == target) {
@@ -621,7 +587,7 @@ DevinsTrader extends Module {
         if (event.request != rotationRequest) return;
 
         if (currentVillager != null && firstVillagerId == null) {
-            firstVillagerId  = currentVillager.getId();
+            firstVillagerId = currentVillager.getId();
             firstVillagerPos = currentVillager.getPos();
             log("Recorded first villager ID: " + firstVillagerId);
         }
@@ -636,7 +602,6 @@ DevinsTrader extends Module {
                 false
             );
 
-            // Use vanilla network handler packets
             mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
                 PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND,
                 BlockPos.ORIGIN, Direction.DOWN
@@ -653,9 +618,7 @@ DevinsTrader extends Module {
             return;
         }
 
-        // Villager interaction logic
         if (currentVillager != null) {
-            // Send interact packets directly
             mc.player.networkHandler.sendPacket(
                 PlayerInteractEntityC2SPacket.interactAt(
                     currentVillager,
@@ -675,11 +638,11 @@ DevinsTrader extends Module {
             if (useBaritone.get()) {
                 var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
                 baritone.getCustomGoalProcess().onLostControl();
-                stuckTicks           = 0;
-                stuckAttempts        = 0;
-                nudgeTicksRemaining  = 0;
-                nudgeElapsed         = 0;
-                lastGoalPos          = null;
+                stuckTicks = 0;
+                stuckAttempts = 0;
+                nudgeTicksRemaining = 0;
+                nudgeElapsed = 0;
+                lastGoalPos = null;
             }
 
             tradedVillagersPermanent.add(currentVillager.getId());
@@ -728,8 +691,8 @@ DevinsTrader extends Module {
             return;
         }
 
-        ItemStack firstBuy  = chosen.getDisplayedFirstBuyItem();
-        ItemStack secondBuy = chosen.getDisplayedSecondBuyItem(); // usually empty
+        ItemStack firstBuy = chosen.getDisplayedFirstBuyItem();
+        ItemStack secondBuy = chosen.getDisplayedSecondBuyItem();
         int cost = firstBuy.getCount() + secondBuy.getCount();
 
         if (debugChat.get()) {
@@ -738,7 +701,7 @@ DevinsTrader extends Module {
                 (secondBuy.isEmpty() ? "" : ", second slot=" + secondBuy.getCount()) +
                 ")");
         }
-        if (cost-1 >= maxSpendPerTrade.get()) {
+        if (cost - 1 >= maxSpendPerTrade.get()) {
             if (debugChat.get()) log("Skipping — cost exceeds maxSpendPerTrade");
             mc.player.closeHandledScreen();
             return;
@@ -759,31 +722,18 @@ DevinsTrader extends Module {
         mc.getNetworkHandler().sendPacket(new SelectMerchantTradeC2SPacket(index));
         clickSlot(2, SlotActionType.QUICK_MOVE);
         int before = countBuyItem();
-        int after  = countBuyItem();
+        int after = countBuyItem();
         if (after <= before) {
             if (debugChat.get()) log("Trade didn’t register — retrying");
             mc.getNetworkHandler().sendPacket(new SelectMerchantTradeC2SPacket(index));
             clickSlot(2, SlotActionType.QUICK_MOVE);
         }
 
-        // Cleanup
         if (useBaritone.get()) {
             BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().onLostControl();
         }
         mc.player.closeHandledScreen();
     }
-
-    private boolean isGoodDeal(TradeOffer offer) {
-        if (enableBuy.get()) {
-            String itemName = buyItem.get().toLowerCase(Locale.ROOT).trim();
-            Item itemToBuy = tryGetItem(itemName);
-            return itemToBuy != null
-                && offer.getSellItem().getItem() == itemToBuy
-                && !offer.isDisabled();
-        }
-        return false;
-    }
-
     private void clickSlot(int slotId, SlotActionType actionType) {
         try {
             mc.interactionManager.clickSlot(
@@ -823,7 +773,7 @@ DevinsTrader extends Module {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
         bar.getCustomGoalProcess().onLostControl();
         bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(chestPos, 1));
-        isRestocking   = true;
+        isRestocking = true;
         hasOpenedChest = false;
         ChatUtils.info("Restocking → walking to chest at " + chestPos);
     }
@@ -847,7 +797,7 @@ DevinsTrader extends Module {
         BlockPos pos = new BlockPos(chestX.get(), chestY.get(), chestZ.get());
         Vec3d chestCenter = Vec3d.ofCenter(pos);
         if (!hasOpenedChest) {
-            if (mc.player.squaredDistanceTo(chestCenter) <= 3*3) {
+            if (mc.player.squaredDistanceTo(chestCenter) <= 3 * 3) {
                 if (useBaritone.get()) bar.getCustomGoalProcess().onLostControl();
 
                 BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
@@ -868,7 +818,7 @@ DevinsTrader extends Module {
 
         if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler chest)) return;
 
-        int rows      = chest.getRows();
+        int rows = chest.getRows();
         int chestSlots = rows * 9;
 
 
@@ -905,7 +855,7 @@ DevinsTrader extends Module {
     }
 
     private void autoCraftOneEmeraldBlockPerTick() {
-        if (!(mc.player.currentScreenHandler instanceof PlayerScreenHandler)) return;
+        if (!(mc.player.currentScreenHandler instanceof PlayerScreenHandler handler)) return;
 
         int emeraldCount = mc.player.getInventory().main.stream()
             .filter(s -> s.getItem() == Items.EMERALD)
@@ -913,11 +863,10 @@ DevinsTrader extends Module {
             .sum();
         if (emeraldCount >= minEmeralds.get()) return;
 
-        PlayerScreenHandler handler = (PlayerScreenHandler) mc.player.currentScreenHandler;
         int syncId = handler.syncId;
 
         for (int i = 5; i < handler.slots.size(); i++) {
-            var slot  = handler.slots.get(i);
+            var slot = handler.slots.get(i);
             var stack = slot.getStack();
             if (stack.getItem() != Items.EMERALD_BLOCK) continue;
 
@@ -939,10 +888,10 @@ DevinsTrader extends Module {
 
         if (lastGoalPos == null) {
             nudgeTicksRemaining = 0;
-            nudgeElapsed        = 0;
-            stuckTicks          = 0;
-            stuckAttempts       = 0;
-            lastPlayerPos       = mc.player.getPos();
+            nudgeElapsed = 0;
+            stuckTicks = 0;
+            stuckAttempts = 0;
+            lastPlayerPos = mc.player.getPos();
             return;
         }
 
@@ -950,15 +899,15 @@ DevinsTrader extends Module {
             nudgeElapsed++;
 
             if (nudgeElapsed > 500) {
-                Vec3d playerPos  = mc.player.getPos();
+                Vec3d playerPos = mc.player.getPos();
                 Vec3d goalCenter = new Vec3d(
                     lastGoalPos.getX() + 0.5,
                     lastGoalPos.getY(),
                     lastGoalPos.getZ() + 0.5
                 );
-                Vec3d dirToGoal  = goalCenter.subtract(playerPos).normalize();
+                Vec3d dirToGoal = goalCenter.subtract(playerPos).normalize();
                 Vec3d oppositeVec = goalCenter.add(dirToGoal.multiply(scanMaxRange.get()));
-                BlockPos opposite  = new BlockPos(
+                BlockPos opposite = new BlockPos(
                     MathHelper.floor(oppositeVec.x),
                     MathHelper.floor(oppositeVec.y),
                     MathHelper.floor(oppositeVec.z)
@@ -969,7 +918,7 @@ DevinsTrader extends Module {
                     new GoalNear(opposite, (int) Math.ceil(interactionRange.get()))
                 );
 
-                lastGoalPos         = opposite;
+                lastGoalPos = opposite;
                 nudgeTicksRemaining = 0;
                 log("Nudge >500 ticks; rerouting to opposite side at " + opposite);
                 return;
@@ -1013,6 +962,31 @@ DevinsTrader extends Module {
         if (stuckAttempts < 2) {
             nudgeTicksRemaining = nudgeDuration;
             nudgeElapsed = 0;
+        }
+    }
+
+    public enum Profession {
+        ARMORER("armorer"),
+        BUTCHER("butcher"),
+        CARTOGRAPHER("cartographer"),
+        CLERIC("cleric"),
+        FARMER("farmer"),
+        FISHERMAN("fisherman"),
+        FLETCHER("fletcher"),
+        LEATHERWORKER("leatherworker"),
+        LIBRARIAN("librarian"),
+        MASON("mason"),
+        SHEPHERD("shepherd"),
+        TOOLSMITH("toolsmith");
+
+        private final String id;
+
+        Profession(String id) {
+            this.id = id;
+        }
+
+        public String getId() {
+            return id;
         }
     }
 

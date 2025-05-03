@@ -1,53 +1,28 @@
 package com.github.DevinsMod.mixins;
-import java.util.List;
 
 import com.github.DevinsMod.events.RotationRequestCompletedEvent;
-import com.github.DevinsMod.events.SendMovePacketsEvent;
 import com.github.DevinsMod.tracker.RotationManager;
 import com.github.DevinsMod.utils.RotationRequest;
-import net.minecraft.screen.slot.SlotActionType;
-import org.spongepowered.asm.mixin.*;
-import net.minecraft.client.input.Input;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.network.packet.Packet;
-
-
-import org.spongepowered.asm.mixin.injection.*;
-
-
 import meteordevelopment.meteorclient.MeteorClient;
-import net.minecraft.client.util.ClientPlayerTickable;
-import net.minecraft.client.network.ClientPlayerEntity;
-
 import net.minecraft.client.network.ClientPlayNetworkHandler;
-import static meteordevelopment.meteorclient.MeteorClient.mc;
-import meteordevelopment.meteorclient.systems.modules.Modules;
-import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
-import net.minecraft.network.packet.c2s.play.VehicleMoveC2SPacket;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
-import meteordevelopment.meteorclient.systems.modules.movement.Flight;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
+import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.util.math.MathHelper;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 /* Shay: Must be at least 1000 (default) for Boze */
 @Mixin(value = ClientPlayerEntity.class, priority = 1001)
 public class ClientPlayerEntityMixin {
-//public abstract class ClientPlayerEntityMixin extends AbstractClientPlayerEntity {
-
-//
-//    public ClientPlayerEntityMixin(ClientWorld world, GameProfile profile) {
-//        super(world, profile);
-//    }
-
-    @Shadow
-    private void sendSprintingPacket() {
-
-    }
-
-
-    @Shadow
-    protected boolean isCamera() {
-        return false;
-    }
 
     @Shadow
     @Final
@@ -58,11 +33,6 @@ public class ClientPlayerEntityMixin {
     private double lastBaseY;
     @Shadow
     private double lastZ;
-    @Final
-    @Shadow
-    public List<ClientPlayerTickable> tickables;
-    @Shadow
-    public Input input;
     @Shadow
     private boolean lastSneaking;
     @Shadow
@@ -78,6 +48,15 @@ public class ClientPlayerEntityMixin {
     @Shadow
     private boolean autoJumpEnabled;
 
+    @Shadow
+    private void sendSprintingPacket() {
+
+    }
+
+    @Shadow
+    protected boolean isCamera() {
+        return false;
+    }
 
     @Inject(method = "sendMovementPackets", at = @At(value = "TAIL"))
     private void hookSendMovementPacket1s(CallbackInfo ci) {
@@ -138,12 +117,9 @@ public class ClientPlayerEntityMixin {
                     packet = (new PlayerMoveC2SPacket.OnGroundOnly(ground, mc.player.horizontalCollision));
                 }
 
-                SendMovePacketsEvent event = SendMovePacketsEvent.get(packet, shouldUpdatePosition, shouldUpdateRotation, x, y, z, yaw, pitch, ground);
-                MeteorClient.EVENT_BUS.post(event);
 
-                if (!event.isCancelled() && event.getPacket() != null) {
-                    networkHandler.sendPacket(event.getPacket());
-                }
+                networkHandler.sendPacket(packet);
+
 
                 if (shouldUpdatePosition) {
                     lastX = x;

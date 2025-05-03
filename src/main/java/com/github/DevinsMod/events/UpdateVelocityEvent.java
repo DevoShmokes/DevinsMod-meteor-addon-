@@ -2,8 +2,8 @@ package com.github.DevinsMod.events;
 
 import lombok.Getter;
 import lombok.Setter;
-import net.minecraft.util.math.Vec3d;
 import meteordevelopment.meteorclient.events.Cancellable;
+import net.minecraft.util.math.Vec3d;
 
 public class UpdateVelocityEvent extends Cancellable {
     private static final UpdateVelocityEvent INSTANCE = new UpdateVelocityEvent();

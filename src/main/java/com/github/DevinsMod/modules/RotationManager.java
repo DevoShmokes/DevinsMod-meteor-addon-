@@ -8,14 +8,14 @@ import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 
 public class RotationManager extends Module {
-    public RotationManager() {
-        super(DevinsAddon.CATEGORY, "rotation-manager", "Spams interact item packets.");
-    }
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-
     public final Setting<Boolean> movementFix = sgGeneral.add(new BoolSetting.Builder()
         .name("movement-fix")
         .defaultValue(true)
         .build()
     );
+
+    public RotationManager() {
+        super(DevinsAddon.CATEGORY, "rotation-manager", "Spams interact item packets.");
+    }
 }
