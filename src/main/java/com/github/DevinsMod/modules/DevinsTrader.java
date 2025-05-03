@@ -205,6 +205,8 @@ DevinsTrader extends Module {
     private int restockChestOpenTicks = 0;
     private Integer firstVillagerId = null;
     private Vec3d firstVillagerPos = null;
+    private static final int TRADE_SCREEN_OFFER_TIMEOUT = 20; // ticks to wait for trade offers
+
     public DevinsTrader() {
         super(DevinsAddon.CATEGORY, "DevinsTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
     }
@@ -664,11 +666,21 @@ DevinsTrader extends Module {
         }
 
         TradeOfferList offers = handler.getRecipes();
+
+        // ── wait for the server to actually send the offers before giving up ──
         if (offers == null || offers.isEmpty()) {
+            if (tradeScreenOpenTicks < TRADE_SCREEN_OFFER_TIMEOUT) {
+                // still within our timeout window; just wait
+                return;
+            }
+            // timed out without any offers
             mc.player.closeHandledScreen();
             interactionCooldown = 10;
+            ChatUtils.error("No trades available or timed out waiting for offers.");
             return;
         }
+
+        // ── now that offers are present, proceed exactly as before ──
 
         Item targetItem = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
         if (targetItem == null) {
