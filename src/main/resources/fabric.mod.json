@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "devomod",
+  "version": "1.0",
+  "name": "DevinsMod",
+  "description": "A selection of mods coded by Devin.",
+  "authors": [
+    "Devin",
+    "EBS",
+    "Tyler"
+  ],
+  "contact": {
+    "repo": "https://github.com/MeteorDevelopment/meteor-addon-template"
+  },
+  "icon": "assets/template/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "meteor": [
+      "com.github.DevinsMod.DevinsAddon"
+    ]
+  },
+  "mixins": [
+    "addon-template.mixins.json"
+  ],
+  "custom": {
+    "meteor-client:color": "225,25,25"
+  },
+  "depends": {
+    "java": ">=21",
+    "minecraft": ["1.21.4"],
+    "meteor-client": "*"
+  }
+}

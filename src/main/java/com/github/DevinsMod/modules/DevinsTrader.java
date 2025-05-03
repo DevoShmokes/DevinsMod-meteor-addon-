@@ -1,12 +1,23 @@
-package com.example.DevinsMod.modules;
+package com.github.DevinsMod.modules;
 
+
+/*
+  @Author: Devin
+ * @Author: EBS
+ * */
 
 import java.util.stream.StreamSupport;
 import java.util.Random;
 import java.util.stream.Collectors;
 import java.util.*;
+
+import com.github.DevinsMod.DevinsAddon;
+import com.github.DevinsMod.events.RotationRequestCompletedEvent;
+import com.github.DevinsMod.utils.RotationManager;
+import com.github.DevinsMod.utils.RotationRequest;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.*;
+import net.minecraft.util.math.*;
 import net.minecraft.village.VillagerProfession;
 import baritone.api.pathing.goals.Goal;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -25,22 +36,14 @@ import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
 import net.minecraft.village.TradeOffer;
 import net.minecraft.village.TradeOfferList;
-import autoplayaddon.events.RotationRequestCompletedEvent;
-import autoplayaddon.tracker.RotationManager;
-import autoplayaddon.utils.other.RotationRequest;
-import autoplayaddon.utils.other.Utils;
+
 import baritone.api.BaritoneAPI;
 import baritone.api.pathing.goals.GoalNear;
 import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.GenericContainerScreenHandler;
 import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.Direction;
-
 
 
 public class DevinsTrader extends Module {
@@ -250,7 +253,7 @@ public class DevinsTrader extends Module {
     private Vec3d   firstVillagerPos   = null;
 
     public DevinsTrader() {
-        super(AutoplayAddon.autoplay, "DevinsTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
+        super(DevinsAddon.CATEGORY, "DevinsTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
     }
 
     @Override
@@ -656,7 +659,7 @@ public class DevinsTrader extends Module {
                     currentVillager,
                     mc.player.isSneaking(),
                     Hand.MAIN_HAND,
-                    Utils.getClosestPointOnBox(mc.player.getEyePos(), currentVillager.getBoundingBox())
+                    getClosestPointOnBox(mc.player.getEyePos(), currentVillager.getBoundingBox())
                 )
             );
             mc.player.networkHandler.sendPacket(
@@ -1008,6 +1011,14 @@ public class DevinsTrader extends Module {
             nudgeTicksRemaining = nudgeDuration;
             nudgeElapsed = 0;
         }
+    }
+
+
+    public static Vec3d getClosestPointOnBox(Vec3d point, Box box) {
+        double x = Math.max(box.minX, Math.min(box.maxX, point.x));
+        double y = Math.max(box.minY, Math.min(box.maxY, point.y));
+        double z = Math.max(box.minZ, Math.min(box.maxZ, point.z));
+        return new Vec3d(x, y, z);
     }
 
 }

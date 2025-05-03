@@ -1,6 +1,6 @@
-package com.example.DevinsMod;
+package com.github.DevinsMod;
 
-import com.example.DevinsMod.modules.DevinsTrader;
+import com.github.DevinsMod.modules.DevinsTrader;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -28,7 +28,7 @@ public class DevinsAddon extends MeteorAddon {
 
     @Override
     public String getPackage() {
-        return "com.example.DevinsMod";
+        return "com.github.DevinsMod";
     }
 
     @Override

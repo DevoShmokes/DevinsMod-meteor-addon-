@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "42071069",
+  "id": "devomod",
   "version": "1.0",
   "name": "DevinsMod",
   "description": "A selection of mods coded by Devin.",
@@ -14,7 +14,7 @@
   "environment": "client",
   "entrypoints": {
     "meteor": [
-      "com.example.addon.DevinsAddon"
+      "com.github.DevinsMod.DevinsAddon"
     ]
   },
   "mixins": [
@@ -25,7 +25,7 @@
   },
   "depends": {
     "java": ">=21",
-    "minecraft": ["${mc_version}"],
+    "minecraft": ["1.21.4"],
     "meteor-client": "*"
   }
 }

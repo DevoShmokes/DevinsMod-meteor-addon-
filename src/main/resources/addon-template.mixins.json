@@ -1,9 +1,9 @@
 {
   "required": true,
-  "package": "com.example.DevinsMod.mixin",
+  "package": "com.github.DevinsMod.mixins",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "ExampleMixin"
+    "ClientPlayerEntityMixin"
   ],
   "injectors": {
     "defaultRequire": 1

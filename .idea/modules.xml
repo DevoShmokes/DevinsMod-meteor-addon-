@@ -2,7 +2,8 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/meteor-addon-template-master.iml" filepath="$PROJECT_DIR$/.idea/meteor-addon-template-master.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/DevinsMod.main.iml" filepath="$PROJECT_DIR$/.idea/modules/DevinsMod.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/DevinsMod.test.iml" filepath="$PROJECT_DIR$/.idea/modules/DevinsMod.test.iml" />
     </modules>
   </component>
 </project>

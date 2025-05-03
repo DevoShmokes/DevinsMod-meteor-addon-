@@ -1,0 +1,36 @@
+package com.github.DevinsMod.mixins;
+
+import com.github.DevinsMod.events.RotationRequestCompletedEvent;
+import com.github.DevinsMod.utils.RotationManager;
+import com.github.DevinsMod.utils.RotationRequest;
+import meteordevelopment.meteorclient.MeteorClient;
+import net.minecraft.client.network.ClientPlayerEntity;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+@Mixin(ClientPlayerEntity.class)
+public class ClientPlayerEntityMixin {
+    /**
+     * Fire Pre-RotationRequestCompletedEvent before vanilla sendMovementPackets runs.
+     */
+    @Inject(method = "sendMovementPackets", at = @At("HEAD"))
+    private void onSendMovementPacketsPre(CallbackInfo ci) {
+        RotationRequest rotation = RotationManager.getRotationRequest();
+        if (rotation != null) {
+            MeteorClient.EVENT_BUS.post(RotationRequestCompletedEvent.Pre.get(rotation));
+        }
+    }
+
+    /**
+     * Fire Post-RotationRequestCompletedEvent after vanilla sendMovementPackets completes.
+     */
+    @Inject(method = "sendMovementPackets", at = @At("TAIL"))
+    private void onSendMovementPacketsPost(CallbackInfo ci) {
+        RotationRequest rotation = RotationManager.getRotationRequest();
+        if (rotation != null) {
+            MeteorClient.EVENT_BUS.post(RotationRequestCompletedEvent.Post.get(rotation));
+        }
+    }
+}
