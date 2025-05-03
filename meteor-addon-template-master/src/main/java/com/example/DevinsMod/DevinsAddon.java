@@ -1,0 +1,38 @@
+package com.example.DevinsMod;
+
+import com.example.DevinsMod.modules.DevinsTrader;
+import com.mojang.logging.LogUtils;
+import meteordevelopment.meteorclient.addons.GithubRepo;
+import meteordevelopment.meteorclient.addons.MeteorAddon;
+import meteordevelopment.meteorclient.systems.hud.HudGroup;
+import meteordevelopment.meteorclient.systems.modules.Category;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import org.slf4j.Logger;
+
+public class DevinsAddon extends MeteorAddon {
+    public static final Logger LOG = LogUtils.getLogger();
+    public static final Category CATEGORY = new Category("DevinsMods");
+
+    @Override
+    public void onInitialize() {
+        LOG.info("Initializing DevinsMod");
+
+        // Modules
+        Modules.get().add(new DevinsTrader());
+    }
+
+    @Override
+    public void onRegisterCategories() {
+        Modules.registerCategory(CATEGORY);
+    }
+
+    @Override
+    public String getPackage() {
+        return "com.example.DevinsMod";
+    }
+
+    @Override
+    public GithubRepo getRepo() {
+        return new GithubRepo("MeteorDevelopment", "meteor-addon-template");
+    }
+}
