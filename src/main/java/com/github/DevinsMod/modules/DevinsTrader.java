@@ -295,15 +295,13 @@ DevinsTrader extends Module {
             .mapToInt(s -> s.getCount())
             .sum();
 
-        if (mc.currentScreen instanceof MerchantScreen) {
-            tradeScreenOpenTicks++;
-            if (tradeScreenOpenTicks > 30) {
-                mc.player.closeHandledScreen();
-                ChatUtils.error("Trade GUI open too long, closing to recover.");
-                tradeScreenOpenTicks = 0;
-            } else {
-                handleMerchantScreen((MerchantScreen) mc.currentScreen);
-            }
+        int currentCount = countBuyItem();
+        if (!isExporting && currentCount >= exportThreshold.get()) {
+            startExport();
+            return;
+        }
+        if (isExporting) {
+            handleExportChestScreen();
             return;
         } else {
             tradeScreenOpenTicks = 0;
@@ -512,19 +510,14 @@ DevinsTrader extends Module {
 
     private void startExport() {
         BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
-        if (!useBaritone.get()) {
-            ChatUtils.error("Export requires Baritone!");
-            return;
-        }
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
         bar.getCustomGoalProcess().onLostControl();
         bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, 1));
 
         isExporting = true;
         awaitingExportChestOpen = true;
-        exportChestWaitTicks = 0;
         hasOpenedExportChest = false;
-
+        exportChestWaitTicks = 0;
         ChatUtils.info("Exporting → walking to chest at " + pos);
     }
 
@@ -571,36 +564,26 @@ DevinsTrader extends Module {
         if (awaitingExportChestOpen && !hasOpenedExportChest) {
             BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
             BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
-
-            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
-            ));
-            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.OFF_HAND, hit, 0));
-            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
-            ));
-
+            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hit, 0));
             hasOpenedExportChest = true;
+            awaitingExportChestOpen = false;
             ChatUtils.info("Opening export chest…");
-            exportChestWaitTicks = 0;
             return;
         }
 
-        if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler)) {
-            exportChestWaitTicks++;
-            if (exportChestWaitTicks > CHEST_SCREEN_OPEN_TIMEOUT) {
+        if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler chest)) {
+            if (++exportChestWaitTicks > CHEST_SCREEN_OPEN_TIMEOUT) {
                 ChatUtils.error("Timed out waiting for export chest to open.");
                 isExporting = false;
             }
             return;
         }
 
-        GenericContainerScreenHandler chest = (GenericContainerScreenHandler) mc.player.currentScreenHandler;
         int syncId = chest.syncId;
         Item target = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
         int deposited = 0;
-
-        for (int i = 5; i < chest.slots.size(); i++) {
+        int chestSlots = chest.getRows() * 9;
+        for (int i = chestSlots; i < chest.slots.size(); i++) {
             if (chest.slots.get(i).getStack().getItem() == target) {
                 clickSlot(i, SlotActionType.QUICK_MOVE);
                 deposited++;
@@ -608,10 +591,11 @@ DevinsTrader extends Module {
         }
 
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
-        mc.setScreen(null);
         mc.player.closeHandledScreen();
         isExporting = false;
-        ChatUtils.info("Exported " + deposited + " stacks of " + buyItem.get());
+        ChatUtils.info("Exported " + deposited + " items. Remaining: " + countBuyItem());
+
+        if (useBaritone.get()) restartTradingCycle();
     }
 
     @EventHandler
