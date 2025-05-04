@@ -13,6 +13,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ingame.MerchantScreen;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.passive.VillagerEntity;
@@ -264,6 +265,7 @@ DevinsTrader extends Module {
 
         if (mc.currentScreen instanceof MerchantScreen) {
             mc.player.closeHandledScreen();
+            MinecraftClient.getInstance().player.closeHandledScreen();
         }
 
         ChatUtils.info("DevinsTrader deactivated, data reset.");
@@ -392,7 +394,6 @@ DevinsTrader extends Module {
         double interactSq = interactionRange.get() * interactionRange.get();
 
         if (useBaritone.get()) {
-            // 1) collect all valid villagers
             VillagerProfession prof = Registries.VILLAGER_PROFESSION.get(
                 Identifier.tryParse("minecraft:" + targetProfession.get().getId())
             );
@@ -415,18 +416,15 @@ DevinsTrader extends Module {
                 return;
             }
 
-            // 2) group by Y-level
             Map<Integer, List<VillagerEntity>> byY = all.stream()
                 .collect(Collectors.groupingBy(v -> v.getBlockPos().getY()));
 
-            // 3) if we've exhausted currentYLevel, pick the next nearest Y
             if (!byY.containsKey(currentYLevel)) {
                 currentYLevel = byY.keySet().stream()
                     .min(Comparator.comparingInt(y -> Math.abs(y - currentYLevel)))
                     .get();
             }
 
-            // 4) pick the nearest villager on that level
             List<VillagerEntity> levelList = byY.get(currentYLevel);
             VillagerEntity target = levelList.stream()
                 .min(Comparator.comparingDouble(v -> mc.player.squaredDistanceTo(v)))
@@ -461,7 +459,6 @@ DevinsTrader extends Module {
             return;
         }
 
-        // non-Baritone fallback (nearest-first)
         List<Entity> villagers = StreamSupport.stream(mc.world.getEntities().spliterator(), false)
             .filter(e -> e instanceof VillagerEntity)
             .filter(e -> mc.player.squaredDistanceTo(e) <= interactSq)
@@ -535,10 +532,8 @@ DevinsTrader extends Module {
 
     private void handleExportChestScreen() {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
-        // 1) Wait for Baritone to finish walking
         if (bar.getCustomGoalProcess().isActive()) return;
 
-        // 2) Initial chest-open
         if (awaitingExportChestOpen && !hasOpenedExportChest) {
             BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
             BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
@@ -556,7 +551,6 @@ DevinsTrader extends Module {
             return;
         }
 
-        // 3) Timeout if GUI never opens
         if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler)) {
             exportChestWaitTicks++;
             if (exportChestWaitTicks > CHEST_SCREEN_OPEN_TIMEOUT) {
@@ -566,7 +560,6 @@ DevinsTrader extends Module {
             return;
         }
 
-        // 4) Once open, deposit ALL buyItems from your inventory slots
         GenericContainerScreenHandler chest = (GenericContainerScreenHandler) mc.player.currentScreenHandler;
         int syncId = chest.syncId;
         Item target = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
@@ -580,10 +573,10 @@ DevinsTrader extends Module {
             }
         }
 
-        // 5) Close and reset
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
         mc.player.closeHandledScreen();
         mc.setScreen(null);
+        MinecraftClient.getInstance().player.closeHandledScreen();
         isExporting = false;
         ChatUtils.info("Exported " + deposited + " stacks of " + buyItem.get());
 
@@ -665,7 +658,6 @@ DevinsTrader extends Module {
             interactionsThisTick++;
             log("Interaction complete: " + currentVillager.getName().getString());
 
-// ← record where we just traded so we can come back here
             lastTradedPos = new BlockPos(
                 MathHelper.floor(currentVillager.getX()),
                 MathHelper.floor(currentVillager.getY()),
@@ -679,33 +671,40 @@ DevinsTrader extends Module {
 
     private void handleMerchantScreen(MerchantScreen merch) {
         ScreenHandler sh = mc.player.currentScreenHandler;
+        // If for some reason we're not in a MerchantScreenHandler, force-close GUI
         if (!(sh instanceof MerchantScreenHandler handler)) {
             mc.player.closeHandledScreen();
+            mc.setScreen(null);
             return;
         }
 
         TradeOfferList offers = handler.getRecipes();
-
+        // If offers haven't shown up yet, wait up to the timeout
         if (offers == null || offers.isEmpty()) {
+            tradeScreenOpenTicks++;
             if (tradeScreenOpenTicks < TRADE_SCREEN_OFFER_TIMEOUT) {
-                // still within our timeout window; just wait
                 return;
             }
-            mc.player.closeHandledScreen();
-            interactionCooldown = 10;
             ChatUtils.error("No trades available or timed out waiting for offers.");
+            mc.player.closeHandledScreen();
+            mc.setScreen(null);
+            interactionCooldown = 10;
+            tradeScreenOpenTicks = 0;
             return;
         }
+        // We've gotten offers—reset the timeout counter
+        tradeScreenOpenTicks = 0;
 
-        // ── now that offers are present, proceed exactly as before ──
-
+        // Validate target item
         Item targetItem = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
         if (targetItem == null) {
             ChatUtils.error("Invalid buy-item: " + buyItem.get());
             mc.player.closeHandledScreen();
+            mc.setScreen(null);
             return;
         }
 
+        // Find a matching trade offer
         TradeOffer chosen = null;
         for (TradeOffer offer : offers) {
             if (offer.getSellItem().getItem() == targetItem && !offer.isDisabled()) {
@@ -713,45 +712,43 @@ DevinsTrader extends Module {
                 break;
             }
         }
-
         if (chosen == null) {
             if (debugChat.get()) log("No trade for " + targetItem.getTranslationKey());
             mc.player.closeHandledScreen();
+            mc.setScreen(null);
             return;
         }
 
+        // Check cost vs. settings
         ItemStack firstBuy = chosen.getDisplayedFirstBuyItem();
         ItemStack secondBuy = chosen.getDisplayedSecondBuyItem();
         int cost = firstBuy.getCount() + secondBuy.getCount();
-
-        if (debugChat.get()) {
-            log("Target trade costs " + cost +
-                " emeralds (first slot=" + firstBuy.getCount() +
-                (secondBuy.isEmpty() ? "" : ", second slot=" + secondBuy.getCount()) +
-                ")");
-        }
         if (cost - 1 >= maxSpendPerTrade.get()) {
             if (debugChat.get()) log("Skipping — cost exceeds maxSpendPerTrade");
             mc.player.closeHandledScreen();
+            mc.setScreen(null);
             return;
         }
 
+        // Ensure we have enough emeralds
         int emeraldCount = mc.player.getInventory().main.stream()
             .filter(s -> s.getItem() == Items.EMERALD)
-            .mapToInt(s -> s.getCount())
-            .sum();
-
+            .mapToInt(ItemStack::getCount).sum();
         if (emeraldCount < cost) {
             if (debugChat.get()) log("Skipping — not enough emeralds (have " + emeraldCount + ")");
             mc.player.closeHandledScreen();
+            mc.setScreen(null);
             return;
         }
 
+        // Perform the trade
         int index = offers.indexOf(chosen);
         mc.getNetworkHandler().sendPacket(new SelectMerchantTradeC2SPacket(index));
         clickSlot(2, SlotActionType.QUICK_MOVE);
+
+        // Retry once if needed
         int before = countBuyItem();
-        int after = countBuyItem();
+        int after  = countBuyItem();
         if (after <= before) {
             if (debugChat.get()) log("Trade didn’t register — retrying");
             mc.getNetworkHandler().sendPacket(new SelectMerchantTradeC2SPacket(index));
@@ -761,7 +758,10 @@ DevinsTrader extends Module {
         if (useBaritone.get()) {
             BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().onLostControl();
         }
+
+        // **Finally** close both server and client screens
         mc.player.closeHandledScreen();
+        mc.setScreen(null);
     }
     private void clickSlot(int slotId, SlotActionType actionType) {
         try {
@@ -874,6 +874,7 @@ DevinsTrader extends Module {
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
         mc.setScreen(null);
         mc.player.closeHandledScreen();
+        MinecraftClient.getInstance().player.closeHandledScreen();
         isRestocking = false;
         ChatUtils.info("✅ Restocked " + taken + " stacks of emerald(s)/blocks.");
     }
