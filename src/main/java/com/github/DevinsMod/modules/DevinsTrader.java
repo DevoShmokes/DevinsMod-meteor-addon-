@@ -89,14 +89,6 @@ DevinsTrader extends Module {
         .defaultValue(true)
         .build()
     );
-    private final Setting<Double> interactionDelay = sgGeneral.add(new DoubleSetting.Builder()
-        .name("interaction-delay")
-        .description("Delay in ticks after a villager interaction before the next.")
-        .defaultValue(0.8)
-        .min(0)
-        .max(20)
-        .build()
-    );
     private final Setting<Double> maxInteractionsPerTick = sgGeneral.add(new DoubleSetting.Builder()
         .name("max-interactions-per-tick")
         .description("Max villagers to interact with per tick.")
@@ -124,6 +116,14 @@ DevinsTrader extends Module {
         .name("max-spend-per-trade")
         .description("Skip any trade costing more emeralds than this")
         .defaultValue(5)
+        .min(1)
+        .max(64)
+        .build()
+    );
+    private final Setting<Integer> restockStacks = sgGeneral.add(new IntSetting.Builder()
+        .name("restock-stacks")
+        .description("How many stacks to pull from the restock chest.")
+        .defaultValue(4)
         .min(1)
         .max(64)
         .build()
@@ -183,7 +183,6 @@ DevinsTrader extends Module {
     private final Set<Integer> tradedVillagersPermanent = new HashSet<>();
     private final int villagerCooldown = 200; // ticks
     private final RotationRequest rotationRequest = new RotationRequest(100, false);
-    private final Random random = new Random();
     private final int nudgeDuration = 150;
     private double tradeCooldown = 0, interactionCooldown = 0;
     private int interactionsThisTick = 0;
@@ -201,11 +200,13 @@ DevinsTrader extends Module {
     private boolean hasOpenedExportChest = false;
     private int tradeScreenOpenTicks = 0;
     private boolean awaitingExportChestOpen = false;
-    private int exportChestOpenTicks = 0;
-    private int restockChestOpenTicks = 0;
     private Integer firstVillagerId = null;
     private Vec3d firstVillagerPos = null;
-    private static final int TRADE_SCREEN_OFFER_TIMEOUT = 20; // ticks to wait for trade offers
+    private static final int TRADE_SCREEN_OFFER_TIMEOUT = 60; // ticks to wait for trade offers
+    private int restockChestWaitTicks = 0;
+    private boolean awaitingRestockChestOpen = false;
+    private int exportChestWaitTicks = 0;
+    private static final int CHEST_SCREEN_OPEN_TIMEOUT = 40;
 
     public DevinsTrader() {
         super(DevinsAddon.CATEGORY, "DevinsTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
@@ -323,17 +324,53 @@ DevinsTrader extends Module {
             .filter(s -> s.getItem() == Items.EMERALD)
             .mapToInt(s -> s.getCount())
             .sum();
+
+        if (useBaritone.get()) {
+            if (emeraldCount >= exportThreshold.get() && !isExporting) {
+                startExport();
+                return;
+            }
+            if (isExporting) {
+                handleExportChestScreen();
+                return;
+            }
+        }
+
+        if (useBaritone.get()) {
+            if (isRestocking) {
+                handleRestockChestScreen();
+                return;
+            }
+
+            int blockCount = mc.player.getInventory().main.stream()
+                .filter(s -> s.getItem() == Items.EMERALD_BLOCK)
+                .mapToInt(s -> s.getCount())
+                .sum();
+
+            if (emeraldCount < minEmeralds.get() && blockCount == 0) {
+                startRestock();
+                return;
+            }
+        }
+
+        if (emeraldCount < minEmeralds.get()) {
+            autoCraftOneEmeraldBlockPerTick();
+            return;
+        }
+
         if (emeraldCount < minEmeralds.get()) {
             autoCraftOneEmeraldBlockPerTick();
             return;
         }
 
         if (useBaritone.get()) {
+            int looseEmeraldCount = emeraldCount; // renamed
             int blockCount = mc.player.getInventory().main.stream()
                 .filter(s -> s.getItem() == Items.EMERALD_BLOCK)
                 .mapToInt(s -> s.getCount())
                 .sum();
-            if (blockCount == 0 && !isRestocking) {
+
+            if (looseEmeraldCount < minEmeralds.get() && blockCount == 0 && !isRestocking) {
                 startRestock();
                 return;
             }
@@ -482,9 +519,12 @@ DevinsTrader extends Module {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
         bar.getCustomGoalProcess().onLostControl();
         bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, 1));
+
         isExporting = true;
+        awaitingExportChestOpen = true;
+        exportChestWaitTicks = 0;
         hasOpenedExportChest = false;
-        awaitingExportChestOpen = false;
+
         ChatUtils.info("Exporting → walking to chest at " + pos);
     }
 
@@ -528,60 +568,49 @@ DevinsTrader extends Module {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
         if (bar.getCustomGoalProcess().isActive()) return;
 
-        if (mc.player.currentScreenHandler instanceof GenericContainerScreenHandler) {
-            exportChestOpenTicks++;
-            if (exportChestOpenTicks > 30) {
-                mc.player.closeHandledScreen();
-                ChatUtils.error("Export chest GUI open too long, closing to recover.");
-                exportChestOpenTicks = 0;
-                mc.setScreen(null);
-                return;
-            }
-        } else {
-            exportChestOpenTicks = 0;
+        if (awaitingExportChestOpen && !hasOpenedExportChest) {
+            BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
+            BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
+
+            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
+                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
+            ));
+            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.OFF_HAND, hit, 0));
+            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
+                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
+            ));
+
+            hasOpenedExportChest = true;
+            ChatUtils.info("Opening export chest…");
+            exportChestWaitTicks = 0;
+            return;
         }
 
-        BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
-        Vec3d center = Vec3d.ofCenter(pos);
-
-        if (!hasOpenedExportChest) {
-            if (mc.player.squaredDistanceTo(center) <= 5 * 5) {
-
-                if (useBaritone.get()) bar.getCustomGoalProcess().onLostControl();
-
-                BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
-                mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                    PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND,
-                    BlockPos.ORIGIN, Direction.DOWN));
-                mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.OFF_HAND, hit, 0));
-                mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                    PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND,
-                    BlockPos.ORIGIN, Direction.DOWN
-                ));
-
-                hasOpenedExportChest = true;
-                ChatUtils.info("Opening export chest…");
+        if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler)) {
+            exportChestWaitTicks++;
+            if (exportChestWaitTicks > CHEST_SCREEN_OPEN_TIMEOUT) {
+                ChatUtils.error("Timed out waiting for export chest to open.");
+                isExporting = false;
             }
             return;
         }
 
-        if (mc.player.currentScreenHandler instanceof GenericContainerScreenHandler chest) {
-            Item target = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
-            int syncId = chest.syncId;
-            int deposited = 0;
+        GenericContainerScreenHandler chest = (GenericContainerScreenHandler) mc.player.currentScreenHandler;
+        int syncId = chest.syncId;
+        Item target = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
+        int deposited = 0;
 
-            for (int i = 5; i < chest.slots.size(); i++) {
-                if (chest.slots.get(i).getStack().getItem() == target) {
-                    clickSlot(i, SlotActionType.QUICK_MOVE);
-                    deposited++;
-                }
+        for (int i = 5; i < chest.slots.size(); i++) {
+            if (chest.slots.get(i).getStack().getItem() == target) {
+                clickSlot(i, SlotActionType.QUICK_MOVE);
+                deposited++;
             }
-
-            mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
-            mc.setScreen(null);
-            isExporting = false;
-            ChatUtils.info("Exported " + deposited + " stacks of " + buyItem.get());
         }
+
+        mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
+        mc.setScreen(null);
+        isExporting = false;
+        ChatUtils.info("Exported " + deposited + " stacks of " + buyItem.get());
     }
 
     @EventHandler
@@ -594,7 +623,7 @@ DevinsTrader extends Module {
             log("Recorded first villager ID: " + firstVillagerId);
         }
 
-        // Export chest opening logic
+
         if (awaitingExportChestOpen) {
             BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
             BlockHitResult hit = new BlockHitResult(
@@ -667,13 +696,11 @@ DevinsTrader extends Module {
 
         TradeOfferList offers = handler.getRecipes();
 
-        // ── wait for the server to actually send the offers before giving up ──
         if (offers == null || offers.isEmpty()) {
             if (tradeScreenOpenTicks < TRADE_SCREEN_OFFER_TIMEOUT) {
                 // still within our timeout window; just wait
                 return;
             }
-            // timed out without any offers
             mc.player.closeHandledScreen();
             interactionCooldown = 10;
             ChatUtils.error("No trades available or timed out waiting for offers.");
@@ -785,85 +812,79 @@ DevinsTrader extends Module {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
         bar.getCustomGoalProcess().onLostControl();
         bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(chestPos, 1));
+
         isRestocking = true;
+        awaitingRestockChestOpen = true;
+        restockChestWaitTicks = 0;
         hasOpenedChest = false;
+
         ChatUtils.info("Restocking → walking to chest at " + chestPos);
     }
 
     private void handleRestockChestScreen() {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
-
         if (bar.getCustomGoalProcess().isActive()) return;
-        if (mc.player.currentScreenHandler instanceof GenericContainerScreenHandler) {
-            restockChestOpenTicks++;
-            if (restockChestOpenTicks > 30) {
-                mc.player.closeHandledScreen();
-                ChatUtils.error("Restock chest GUI open too long, closing to recover.");
-                restockChestOpenTicks = 0;
-                mc.setScreen(null);
-                return;
-            }
-        } else {
-            restockChestOpenTicks = 0;
+
+        if (!hasOpenedChest && awaitingRestockChestOpen) {
+            BlockPos pos = new BlockPos(chestX.get(), chestY.get(), chestZ.get());
+            BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
+
+            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
+                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
+            ));
+            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.OFF_HAND, hit, 0));
+            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
+                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
+            ));
+
+            hasOpenedChest = true;
+            restockChestWaitTicks = 0;
+            ChatUtils.info("Opening restock chest…");
+            return;
         }
-        BlockPos pos = new BlockPos(chestX.get(), chestY.get(), chestZ.get());
-        Vec3d chestCenter = Vec3d.ofCenter(pos);
-        if (!hasOpenedChest) {
-            if (mc.player.squaredDistanceTo(chestCenter) <= 3 * 3) {
-                if (useBaritone.get()) bar.getCustomGoalProcess().onLostControl();
 
-                BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
-
-                mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                    PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
-                ));
-                mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.OFF_HAND, hit, 0));
-                mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                    PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
-                ));
-
-                hasOpenedChest = true;
-                ChatUtils.info("Opening restock chest…");
+        if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler)) {
+            restockChestWaitTicks++;
+            if (restockChestWaitTicks > CHEST_SCREEN_OPEN_TIMEOUT) {
+                ChatUtils.error("Timed out waiting for restock chest to open.");
+                isRestocking = false;
             }
             return;
         }
 
-        if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler chest)) return;
+        GenericContainerScreenHandler chest = (GenericContainerScreenHandler) mc.player.currentScreenHandler;
+        int syncId = chest.syncId;
+        List<Integer> blockSlots   = new ArrayList<>();
+        List<Integer> emeraldSlots = new ArrayList<>();
 
-        int rows = chest.getRows();
-        int chestSlots = rows * 9;
-
-
-        int availableStacks = 0;
-        for (int i = 0; i < chestSlots; i++) {
-            if (chest.slots.get(i).getStack().getItem() == Items.EMERALD_BLOCK) availableStacks++;
+        for (int i = 0; i < chest.slots.size(); i++) {
+            Item item = chest.slots.get(i).getStack().getItem();
+            if      (item == Items.EMERALD_BLOCK) blockSlots.add(i);
+            else if (item == Items.EMERALD)       emeraldSlots.add(i);
         }
-        if (debugChat.get()) ChatUtils.info("Restock chest contains " + availableStacks + " stacks of Emerald Blocks");
 
-        if (availableStacks == 0) {
-            for (int i = 0; i < chestSlots; i++) {
-                if (chest.slots.get(i).getStack().getItem() == Items.EMERALD_BLOCK) availableStacks++;
-            }
-            int syncId = chest.syncId;
+        if (blockSlots.isEmpty() && emeraldSlots.isEmpty()) {
             mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
-            ChatUtils.error("❌ No Emerald Blocks left in restock chest – disabling DevinsTrader.");
+            ChatUtils.error("❌ No emeralds or emerald blocks left in restock chest – disabling DevinsTrader.");
             toggle();
             return;
         }
-
         int taken = 0;
-        int syncId = chest.syncId;
-        for (int i = 0; i < chestSlots && taken < 4; i++) {
-            if (chest.slots.get(i).getStack().getItem() == Items.EMERALD_BLOCK) {
-                clickSlot(i, SlotActionType.QUICK_MOVE);
-                taken++;
-            }
+        for (int slot : blockSlots) {
+            if (taken >= restockStacks.get()) break;
+            clickSlot(slot, SlotActionType.QUICK_MOVE);
+            taken++;
+        }
+        for (int slot : emeraldSlots) {
+            if (taken >= restockStacks.get()) break;
+            clickSlot(slot, SlotActionType.QUICK_MOVE);
+            taken++;
         }
 
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
         mc.setScreen(null);
         isRestocking = false;
-        ChatUtils.info("✅ Restocked " + taken + " stacks of Emerald Blocks.");
+        ChatUtils.info("✅ Restocked " + taken + " stacks of emerald(s)/blocks.");
     }
 
     private void autoCraftOneEmeraldBlockPerTick() {
