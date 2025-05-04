@@ -201,13 +201,13 @@ DevinsTrader extends Module {
     private int tradeScreenOpenTicks = 0;
     private boolean awaitingExportChestOpen = false;
     private Integer firstVillagerId = null;
-    private Integer lastVillagerId = null;
     private Vec3d firstVillagerPos = null;
     private static final int TRADE_SCREEN_OFFER_TIMEOUT = 60; // ticks to wait for trade offers
     private int restockChestWaitTicks = 0;
     private boolean awaitingRestockChestOpen = false;
     private int exportChestWaitTicks = 0;
     private static final int CHEST_SCREEN_OPEN_TIMEOUT = 40;
+    private BlockPos lastTradedPos = null;
 
     public DevinsTrader() {
         super(DevinsAddon.CATEGORY, "DevinsTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
@@ -287,27 +287,7 @@ DevinsTrader extends Module {
             isRestocking = false;
         }
 
-        int have = mc.player.getInventory().main.stream()
-            .filter(s -> {
-                Item it = s.getItem();
-                Item target = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
-                return it == target;
-            })
-            .mapToInt(s -> s.getCount())
-            .sum();
-
-        int currentCount = countBuyItem();
-        if (!isExporting && currentCount >= exportThreshold.get()) {
-            startExport();
-            return;
-        }
-        if (isExporting) {
-            handleExportChestScreen();
-            return;
-        } else {
-            tradeScreenOpenTicks = 0;
-        }
-
+        int have = countBuyItem();
         if (useBaritone.get()) {
             if (have >= exportThreshold.get() && !isExporting) {
                 startExport();
@@ -324,16 +304,6 @@ DevinsTrader extends Module {
             .mapToInt(s -> s.getCount())
             .sum();
 
-        if (useBaritone.get()) {
-            if (emeraldCount >= exportThreshold.get() && !isExporting) {
-                startExport();
-                return;
-            }
-            if (isExporting) {
-                handleExportChestScreen();
-                return;
-            }
-        }
 
         if (useBaritone.get()) {
             if (isRestocking) {
@@ -422,12 +392,12 @@ DevinsTrader extends Module {
         double interactSq = interactionRange.get() * interactionRange.get();
 
         if (useBaritone.get()) {
+            // 1) collect all valid villagers
             VillagerProfession prof = Registries.VILLAGER_PROFESSION.get(
                 Identifier.tryParse("minecraft:" + targetProfession.get().getId())
             );
             if (prof == null) {
-                if (debugChat.get())
-                    log("Unknown profession: " + targetProfession.get().getId() + " — skipping Baritone pathing.");
+                if (debugChat.get()) log("Unknown profession: " + targetProfession.get().getId());
                 return;
             }
 
@@ -445,20 +415,23 @@ DevinsTrader extends Module {
                 return;
             }
 
-            int bestY = all.stream()
-                .mapToInt(v -> v.getBlockPos().getY())
-                .boxed()
-                .min(Comparator.comparingInt(y -> Math.abs(y - currentYLevel)))
-                .orElse(currentYLevel);
-            currentYLevel = bestY;
+            // 2) group by Y-level
+            Map<Integer, List<VillagerEntity>> byY = all.stream()
+                .collect(Collectors.groupingBy(v -> v.getBlockPos().getY()));
 
-            List<VillagerEntity> levelList = all.stream()
-                .filter(v -> v.getBlockPos().getY() == bestY)
-                .sorted(Comparator.comparingDouble(v -> mc.player.squaredDistanceTo(v)))
-                .collect(Collectors.toList());
-            if (levelList.isEmpty()) return;
+            // 3) if we've exhausted currentYLevel, pick the next nearest Y
+            if (!byY.containsKey(currentYLevel)) {
+                currentYLevel = byY.keySet().stream()
+                    .min(Comparator.comparingInt(y -> Math.abs(y - currentYLevel)))
+                    .get();
+            }
 
-            VillagerEntity target = levelList.get(0);
+            // 4) pick the nearest villager on that level
+            List<VillagerEntity> levelList = byY.get(currentYLevel);
+            VillagerEntity target = levelList.stream()
+                .min(Comparator.comparingDouble(v -> mc.player.squaredDistanceTo(v)))
+                .get();
+
             BlockPos pos = new BlockPos(
                 MathHelper.floor(target.getX()),
                 MathHelper.floor(target.getY()),
@@ -467,30 +440,28 @@ DevinsTrader extends Module {
             double horizSq = mc.player.squaredDistanceTo(target);
 
             var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
+            baritone.getCustomGoalProcess().onLostControl();
+
             if (horizSq > interactSq) {
                 if (debugChat.get()) log("Baritone → path to " + pos);
                 Vec3d center = new Vec3d(target.getX(), target.getY(), target.getZ());
-                baritone.getCustomGoalProcess().onLostControl();
                 baritone.getCustomGoalProcess().setGoalAndPath(new Goal() {
-                    @Override
-                    public boolean isInGoal(int x, int y, int z) {
+                    @Override public boolean isInGoal(int x, int y, int z) {
                         return new Vec3d(x + .5, y, z + .5).distanceTo(center) <= interactionRange.get();
                     }
-
-                    @Override
-                    public double heuristic(int x, int y, int z) {
+                    @Override public double heuristic(int x, int y, int z) {
                         return new Vec3d(x + .5, y, z + .5).distanceTo(center);
                     }
                 });
                 lastGoalPos = pos;
             } else {
-                baritone.getCustomGoalProcess().onLostControl();
                 interactWithVillagerEntity(target);
                 lastGoalPos = null;
             }
             return;
         }
 
+        // non-Baritone fallback (nearest-first)
         List<Entity> villagers = StreamSupport.stream(mc.world.getEntities().spliterator(), false)
             .filter(e -> e instanceof VillagerEntity)
             .filter(e -> mc.player.squaredDistanceTo(e) <= interactSq)
@@ -511,44 +482,29 @@ DevinsTrader extends Module {
 
     private void startExport() {
         BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
+        if (!useBaritone.get()) {
+            ChatUtils.error("Export requires Baritone!");
+            return;
+        }
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
         bar.getCustomGoalProcess().onLostControl();
         bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, 1));
-
         isExporting = true;
         awaitingExportChestOpen = true;
-        hasOpenedExportChest = false;
         exportChestWaitTicks = 0;
+        hasOpenedExportChest = false;
+
         ChatUtils.info("Exporting → walking to chest at " + pos);
     }
-    private void restartTradingCycle() {
-        // If we just exported or restocked, resume at last traded villager
-        if (lastVillagerId != null) {
-            ChatUtils.info("⌛ Returning to last traded villager (ID " + lastVillagerId + ")...");
-            Entity e = mc.world.getEntityById(lastVillagerId);
-            if (e instanceof VillagerEntity v) {
-                BlockPos pos = new BlockPos(
-                    MathHelper.floor(v.getX()),
-                    MathHelper.floor(v.getY()),
-                    MathHelper.floor(v.getZ())
-                );
-                var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
-                bar.getCustomGoalProcess().onLostControl();
-                bar.getCustomGoalProcess().setGoalAndPath(
-                    new GoalNear(pos, (int) Math.ceil(interactionRange.get()))
-                );
-            } else {
-                ChatUtils.error("Could not locate last villager (ID: " + lastVillagerId + ").");
-            }
-            lastVillagerId = null; // reset
-            return;
-        }
 
-        // Otherwise, cycle back to first villager
+    private void restartTradingCycle() {
         if (firstVillagerId == null) return;
+
         ChatUtils.info("✅ All villagers traded. Restarting cycle with first villager (ID " + firstVillagerId + ").");
+
         tradedVillagersPermanent.clear();
         interactedVillagers.clear();
+
         Entity e = mc.world.getEntityById(firstVillagerId);
         if (e instanceof VillagerEntity first) {
             BlockPos pos = new BlockPos(
@@ -556,10 +512,15 @@ DevinsTrader extends Module {
                 MathHelper.floor(first.getY()),
                 MathHelper.floor(first.getZ())
             );
-            var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
-            bar.getCustomGoalProcess().onLostControl();
-            bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, (int) Math.ceil(interactionRange.get())));
-            ChatUtils.info("→ Pathing back to first villager at " + pos);
+
+            if (useBaritone.get()) {
+                var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
+                baritone.getCustomGoalProcess().onLostControl();
+                baritone.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, (int) Math.ceil(interactionRange.get())));
+                ChatUtils.info("→ Pathing back to first villager at " + pos);
+            } else {
+                log("First villager at " + pos + ". Will interact when in range.");
+            }
         } else {
             ChatUtils.error("Could not find first villager in world (ID: " + firstVillagerId + ").");
         }
@@ -574,29 +535,43 @@ DevinsTrader extends Module {
 
     private void handleExportChestScreen() {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
+        // 1) Wait for Baritone to finish walking
         if (bar.getCustomGoalProcess().isActive()) return;
 
+        // 2) Initial chest-open
         if (awaitingExportChestOpen && !hasOpenedExportChest) {
             BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
             BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
-            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hit, 0));
+            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
+                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
+            ));
+            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.OFF_HAND, hit, 0));
+            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
+                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
+            ));
             hasOpenedExportChest = true;
             awaitingExportChestOpen = false;
             ChatUtils.info("Opening export chest…");
+            exportChestWaitTicks = 0;
             return;
         }
 
-        if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler chest)) {
-            if (++exportChestWaitTicks > CHEST_SCREEN_OPEN_TIMEOUT) {
+        // 3) Timeout if GUI never opens
+        if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler)) {
+            exportChestWaitTicks++;
+            if (exportChestWaitTicks > CHEST_SCREEN_OPEN_TIMEOUT) {
                 ChatUtils.error("Timed out waiting for export chest to open.");
                 isExporting = false;
             }
             return;
         }
 
+        // 4) Once open, deposit ALL buyItems from your inventory slots
+        GenericContainerScreenHandler chest = (GenericContainerScreenHandler) mc.player.currentScreenHandler;
         int syncId = chest.syncId;
         Item target = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
         int deposited = 0;
+
         int chestSlots = chest.getRows() * 9;
         for (int i = chestSlots; i < chest.slots.size(); i++) {
             if (chest.slots.get(i).getStack().getItem() == target) {
@@ -605,20 +580,26 @@ DevinsTrader extends Module {
             }
         }
 
+        // 5) Close and reset
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
         mc.player.closeHandledScreen();
+        mc.setScreen(null);
         isExporting = false;
-        ChatUtils.info("Exported " + deposited + " items. Remaining: " + countBuyItem());
+        ChatUtils.info("Exported " + deposited + " stacks of " + buyItem.get());
 
-        if (useBaritone.get()) restartTradingCycle();
+        if (useBaritone.get() && lastTradedPos != null) {
+                        bar.getCustomGoalProcess().onLostControl();
+                        bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(
+                                lastTradedPos,
+                                (int) Math.ceil(interactionRange.get())
+                                ));
+                    }
     }
 
     @EventHandler
     private void onRotationRequestComplete(RotationRequestCompletedEvent.Post event) {
         if (event.request != rotationRequest) return;
-        if (currentVillager != null) {
-            lastVillagerId = currentVillager.getId();
-        }
+
         if (currentVillager != null && firstVillagerId == null) {
             firstVillagerId = currentVillager.getId();
             firstVillagerPos = currentVillager.getPos();
@@ -683,6 +664,13 @@ DevinsTrader extends Module {
             interactionCooldown = 10;
             interactionsThisTick++;
             log("Interaction complete: " + currentVillager.getName().getString());
+
+// ← record where we just traded so we can come back here
+            lastTradedPos = new BlockPos(
+                MathHelper.floor(currentVillager.getX()),
+                MathHelper.floor(currentVillager.getY()),
+                MathHelper.floor(currentVillager.getZ())
+            );
 
             rotationRequest.setActive(false);
             currentVillager = null;
