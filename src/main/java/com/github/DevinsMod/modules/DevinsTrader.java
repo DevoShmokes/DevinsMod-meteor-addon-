@@ -609,6 +609,7 @@ DevinsTrader extends Module {
 
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
         mc.setScreen(null);
+        mc.player.closeHandledScreen();
         isExporting = false;
         ChatUtils.info("Exported " + deposited + " stacks of " + buyItem.get());
     }
@@ -883,6 +884,7 @@ DevinsTrader extends Module {
 
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
         mc.setScreen(null);
+        mc.player.closeHandledScreen();
         isRestocking = false;
         ChatUtils.info("✅ Restocked " + taken + " stacks of emerald(s)/blocks.");
     }
