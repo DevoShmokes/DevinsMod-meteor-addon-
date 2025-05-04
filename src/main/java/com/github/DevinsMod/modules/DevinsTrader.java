@@ -201,6 +201,7 @@ DevinsTrader extends Module {
     private int tradeScreenOpenTicks = 0;
     private boolean awaitingExportChestOpen = false;
     private Integer firstVillagerId = null;
+    private Integer lastVillagerId = null;
     private Vec3d firstVillagerPos = null;
     private static final int TRADE_SCREEN_OFFER_TIMEOUT = 60; // ticks to wait for trade offers
     private int restockChestWaitTicks = 0;
@@ -520,15 +521,34 @@ DevinsTrader extends Module {
         exportChestWaitTicks = 0;
         ChatUtils.info("Exporting → walking to chest at " + pos);
     }
-
     private void restartTradingCycle() {
+        // If we just exported or restocked, resume at last traded villager
+        if (lastVillagerId != null) {
+            ChatUtils.info("⌛ Returning to last traded villager (ID " + lastVillagerId + ")...");
+            Entity e = mc.world.getEntityById(lastVillagerId);
+            if (e instanceof VillagerEntity v) {
+                BlockPos pos = new BlockPos(
+                    MathHelper.floor(v.getX()),
+                    MathHelper.floor(v.getY()),
+                    MathHelper.floor(v.getZ())
+                );
+                var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
+                bar.getCustomGoalProcess().onLostControl();
+                bar.getCustomGoalProcess().setGoalAndPath(
+                    new GoalNear(pos, (int) Math.ceil(interactionRange.get()))
+                );
+            } else {
+                ChatUtils.error("Could not locate last villager (ID: " + lastVillagerId + ").");
+            }
+            lastVillagerId = null; // reset
+            return;
+        }
+
+        // Otherwise, cycle back to first villager
         if (firstVillagerId == null) return;
-
         ChatUtils.info("✅ All villagers traded. Restarting cycle with first villager (ID " + firstVillagerId + ").");
-
         tradedVillagersPermanent.clear();
         interactedVillagers.clear();
-
         Entity e = mc.world.getEntityById(firstVillagerId);
         if (e instanceof VillagerEntity first) {
             BlockPos pos = new BlockPos(
@@ -536,15 +556,10 @@ DevinsTrader extends Module {
                 MathHelper.floor(first.getY()),
                 MathHelper.floor(first.getZ())
             );
-
-            if (useBaritone.get()) {
-                var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
-                baritone.getCustomGoalProcess().onLostControl();
-                baritone.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, (int) Math.ceil(interactionRange.get())));
-                ChatUtils.info("→ Pathing back to first villager at " + pos);
-            } else {
-                log("First villager at " + pos + ". Will interact when in range.");
-            }
+            var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
+            bar.getCustomGoalProcess().onLostControl();
+            bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, (int) Math.ceil(interactionRange.get())));
+            ChatUtils.info("→ Pathing back to first villager at " + pos);
         } else {
             ChatUtils.error("Could not find first villager in world (ID: " + firstVillagerId + ").");
         }
@@ -601,7 +616,9 @@ DevinsTrader extends Module {
     @EventHandler
     private void onRotationRequestComplete(RotationRequestCompletedEvent.Post event) {
         if (event.request != rotationRequest) return;
-
+        if (currentVillager != null) {
+            lastVillagerId = currentVillager.getId();
+        }
         if (currentVillager != null && firstVillagerId == null) {
             firstVillagerId = currentVillager.getId();
             firstVillagerPos = currentVillager.getPos();
