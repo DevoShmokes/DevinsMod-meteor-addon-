@@ -182,7 +182,7 @@ DevinsTrader extends Module {
     );
     private final Map<Integer, Integer> interactedVillagers = new HashMap<>();
     private final Set<Integer> tradedVillagersPermanent = new HashSet<>();
-    private final int villagerCooldown = 200; // ticks
+    private final int villagerCooldown = 200;
     private final RotationRequest rotationRequest = new RotationRequest(100, false);
     private final int nudgeDuration = 150;
     private double tradeCooldown = 0, interactionCooldown = 0;
@@ -203,12 +203,13 @@ DevinsTrader extends Module {
     private boolean awaitingExportChestOpen = false;
     private Integer firstVillagerId = null;
     private Vec3d firstVillagerPos = null;
-    private static final int TRADE_SCREEN_OFFER_TIMEOUT = 60; // ticks to wait for trade offers
+    private static final int TRADE_SCREEN_OFFER_TIMEOUT = 60;
     private int restockChestWaitTicks = 0;
     private boolean awaitingRestockChestOpen = false;
     private int exportChestWaitTicks = 0;
     private static final int CHEST_SCREEN_OPEN_TIMEOUT = 40;
     private BlockPos lastTradedPos = null;
+    private int merchantScreenTicks = 0;
 
     public DevinsTrader() {
         super(DevinsAddon.CATEGORY, "DevinsTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
@@ -273,6 +274,18 @@ DevinsTrader extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
+        if (mc.currentScreen instanceof MerchantScreen) {
+            merchantScreenTicks++;
+            if (merchantScreenTicks > 30) {
+                mc.player.closeHandledScreen();
+                mc.setScreen(null);
+                merchantScreenTicks = 0;
+                ChatUtils.info("⏱ Merchant screen timed out and was forcibly closed.");
+                return;
+            }
+        } else {
+            merchantScreenTicks = 0;
+        }
         if (debugChat.get()) {
             int emeralds = mc.player.getInventory().main.stream()
                 .filter(s -> s.getItem() == Items.EMERALD).mapToInt(s -> s.getCount()).sum();
@@ -335,7 +348,7 @@ DevinsTrader extends Module {
         }
 
         if (useBaritone.get()) {
-            int looseEmeraldCount = emeraldCount; // renamed
+            int looseEmeraldCount = emeraldCount;
             int blockCount = mc.player.getInventory().main.stream()
                 .filter(s -> s.getItem() == Items.EMERALD_BLOCK)
                 .mapToInt(s -> s.getCount())
@@ -671,7 +684,6 @@ DevinsTrader extends Module {
 
     private void handleMerchantScreen(MerchantScreen merch) {
         ScreenHandler sh = mc.player.currentScreenHandler;
-        // If for some reason we're not in a MerchantScreenHandler, force-close GUI
         if (!(sh instanceof MerchantScreenHandler handler)) {
             mc.player.closeHandledScreen();
             mc.setScreen(null);
@@ -679,7 +691,6 @@ DevinsTrader extends Module {
         }
 
         TradeOfferList offers = handler.getRecipes();
-        // If offers haven't shown up yet, wait up to the timeout
         if (offers == null || offers.isEmpty()) {
             tradeScreenOpenTicks++;
             if (tradeScreenOpenTicks < TRADE_SCREEN_OFFER_TIMEOUT) {
@@ -692,10 +703,8 @@ DevinsTrader extends Module {
             tradeScreenOpenTicks = 0;
             return;
         }
-        // We've gotten offers—reset the timeout counter
         tradeScreenOpenTicks = 0;
 
-        // Validate target item
         Item targetItem = tryGetItem(buyItem.get().toLowerCase(Locale.ROOT).trim());
         if (targetItem == null) {
             ChatUtils.error("Invalid buy-item: " + buyItem.get());
@@ -704,7 +713,6 @@ DevinsTrader extends Module {
             return;
         }
 
-        // Find a matching trade offer
         TradeOffer chosen = null;
         for (TradeOffer offer : offers) {
             if (offer.getSellItem().getItem() == targetItem && !offer.isDisabled()) {
@@ -719,7 +727,6 @@ DevinsTrader extends Module {
             return;
         }
 
-        // Check cost vs. settings
         ItemStack firstBuy = chosen.getDisplayedFirstBuyItem();
         ItemStack secondBuy = chosen.getDisplayedSecondBuyItem();
         int cost = firstBuy.getCount() + secondBuy.getCount();
@@ -730,7 +737,6 @@ DevinsTrader extends Module {
             return;
         }
 
-        // Ensure we have enough emeralds
         int emeraldCount = mc.player.getInventory().main.stream()
             .filter(s -> s.getItem() == Items.EMERALD)
             .mapToInt(ItemStack::getCount).sum();
@@ -741,12 +747,10 @@ DevinsTrader extends Module {
             return;
         }
 
-        // Perform the trade
         int index = offers.indexOf(chosen);
         mc.getNetworkHandler().sendPacket(new SelectMerchantTradeC2SPacket(index));
         clickSlot(2, SlotActionType.QUICK_MOVE);
 
-        // Retry once if needed
         int before = countBuyItem();
         int after  = countBuyItem();
         if (after <= before) {
@@ -759,7 +763,6 @@ DevinsTrader extends Module {
             BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().onLostControl();
         }
 
-        // **Finally** close both server and client screens
         mc.player.closeHandledScreen();
         mc.setScreen(null);
     }
