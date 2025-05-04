@@ -204,12 +204,13 @@ DevinsTrader extends Module {
     private Integer firstVillagerId = null;
     private Vec3d firstVillagerPos = null;
     private static final int TRADE_SCREEN_OFFER_TIMEOUT = 60;
-    private int restockChestWaitTicks = 0;
+    private int restockChestWaitTicks = 40;
     private boolean awaitingRestockChestOpen = false;
     private int exportChestWaitTicks = 0;
     private static final int CHEST_SCREEN_OPEN_TIMEOUT = 40;
     private BlockPos lastTradedPos = null;
     private int merchantScreenTicks = 0;
+    private int restockChestDataTicks = 0;
 
     public DevinsTrader() {
         super(DevinsAddon.CATEGORY, "DevinsTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
@@ -504,7 +505,7 @@ DevinsTrader extends Module {
         exportChestWaitTicks = 0;
         hasOpenedExportChest = false;
 
-        ChatUtils.info("Exporting → walking to chest at " + pos);
+        ChatUtils.info("Exporting → walking to chest" );
     }
 
     private void restartTradingCycle() {
@@ -527,9 +528,9 @@ DevinsTrader extends Module {
                 var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
                 baritone.getCustomGoalProcess().onLostControl();
                 baritone.getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, (int) Math.ceil(interactionRange.get())));
-                ChatUtils.info("→ Pathing back to first villager at " + pos);
+                ChatUtils.info("→ Pathing back to first villager");
             } else {
-                log("First villager at " + pos + ". Will interact when in range.");
+                log("First villager, will interact when in range.");
             }
         } else {
             ChatUtils.error("Could not find first villager in world (ID: " + firstVillagerId + ").");
@@ -811,13 +812,14 @@ DevinsTrader extends Module {
         restockChestWaitTicks = 0;
         hasOpenedChest = false;
 
-        ChatUtils.info("Restocking → walking to chest at " + chestPos);
+        ChatUtils.info("Restocking → walking to chest");
     }
 
     private void handleRestockChestScreen() {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
         if (bar.getCustomGoalProcess().isActive()) return;
 
+        // 1) Open the chest if we haven’t yet
         if (!hasOpenedChest && awaitingRestockChestOpen) {
             BlockPos pos = new BlockPos(chestX.get(), chestY.get(), chestZ.get());
             BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
@@ -836,6 +838,7 @@ DevinsTrader extends Module {
             return;
         }
 
+        // 2) Wait for the chest GUI to actually open
         if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler)) {
             restockChestWaitTicks++;
             if (restockChestWaitTicks > CHEST_SCREEN_OPEN_TIMEOUT) {
@@ -845,23 +848,51 @@ DevinsTrader extends Module {
             return;
         }
 
-        GenericContainerScreenHandler chest = (GenericContainerScreenHandler) mc.player.currentScreenHandler;
+        // At this point the GUI is open – grab the handler
+        GenericContainerScreenHandler chest =
+            (GenericContainerScreenHandler) mc.player.currentScreenHandler;
         int syncId = chest.syncId;
+
+        // 3) Collect emerald‐block and emerald slots (in chest & player inv)
         List<Integer> blockSlots   = new ArrayList<>();
         List<Integer> emeraldSlots = new ArrayList<>();
-
         for (int i = 0; i < chest.slots.size(); i++) {
             Item item = chest.slots.get(i).getStack().getItem();
             if      (item == Items.EMERALD_BLOCK) blockSlots.add(i);
             else if (item == Items.EMERALD)       emeraldSlots.add(i);
         }
 
-        if (blockSlots.isEmpty() && emeraldSlots.isEmpty()) {
+        // 4) WAIT FOR SERVER TO POPULATE the CHEST CONTENTS
+        int containerSize = chest.getRows() * 9;
+        boolean gotData = false;
+        for (int i = 0; i < containerSize; i++) {
+            if (!chest.slots.get(i).getStack().isEmpty()) {
+                gotData = true;
+                break;
+            }
+        }
+
+        // If we either haven’t seen any items yet, OR we see no emeralds/blocks,
+        // treat it like the merchant-offer logic: wait until timeout, then disable.
+        if (!gotData || (blockSlots.isEmpty() && emeraldSlots.isEmpty())) {
+            restockChestDataTicks++;
+            if (restockChestDataTicks < CHEST_SCREEN_OPEN_TIMEOUT) {
+                return; // still waiting for data or legitimately empty
+            }
+
+            // after waiting, assume empty → disable
             mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
             ChatUtils.error("❌ No emeralds or emerald blocks left in restock chest – disabling DevinsTrader.");
             toggle();
+
+            restockChestDataTicks = 0;
             return;
         }
+
+        // 5) We got chest data and found emeralds/blocks → reset and proceed
+        restockChestDataTicks = 0;
+
+        // Move up to `restockStacks` stacks into your inventory
         int taken = 0;
         for (int slot : blockSlots) {
             if (taken >= restockStacks.get()) break;
@@ -874,11 +905,13 @@ DevinsTrader extends Module {
             taken++;
         }
 
+        // 6) Close out
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
         mc.setScreen(null);
         mc.player.closeHandledScreen();
         MinecraftClient.getInstance().player.closeHandledScreen();
         isRestocking = false;
+
         ChatUtils.info("✅ Restocked " + taken + " stacks of emerald(s)/blocks.");
     }
 
