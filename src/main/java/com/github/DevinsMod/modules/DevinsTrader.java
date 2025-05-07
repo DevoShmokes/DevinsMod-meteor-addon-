@@ -137,40 +137,17 @@ DevinsTrader extends Module {
         .max(999)
         .build()
     );
-    private final Setting<Integer> chestX = sgGeneral.add(new IntSetting.Builder()
-        .name("restock-chest-x")
-        .description("X coord of your restock chest")
-        .defaultValue(0)
+    private final Setting<String> restockChestPos = sgGeneral.add(new StringSetting.Builder()
+        .name("restock-chest-pos")
+        .description("X,Y,Z coords of your restock chest")
+        .defaultValue("0,64,0")
         .build()
     );
-    private final Setting<Integer> chestY = sgGeneral.add(new IntSetting.Builder()
-        .name("restock-chest-y")
-        .description("Y coord of your restock chest")
-        .defaultValue(64)
-        .build()
-    );
-    private final Setting<Integer> chestZ = sgGeneral.add(new IntSetting.Builder()
-        .name("restock-chest-z")
-        .description("Z coord of your restock chest")
-        .defaultValue(0)
-        .build()
-    );
-    private final Setting<Integer> exportChestX = sgGeneral.add(new IntSetting.Builder()
-        .name("export-chest-x")
-        .description("X coord of your export chest")
-        .defaultValue(1)
-        .build()
-    );
-    private final Setting<Integer> exportChestY = sgGeneral.add(new IntSetting.Builder()
-        .name("export-chest-y")
-        .description("Y coord of your export chest")
-        .defaultValue(64)
-        .build()
-    );
-    private final Setting<Integer> exportChestZ = sgGeneral.add(new IntSetting.Builder()
-        .name("export-chest-z")
-        .description("Z coord of your export chest")
-        .defaultValue(1)
+
+    private final Setting<String> exportChestPos = sgGeneral.add(new StringSetting.Builder()
+        .name("export-chest-pos")
+        .description("X,Y,Z coords of your export chest")
+        .defaultValue("1,64,1")
         .build()
     );
     private final Setting<Integer> exportThreshold = sgGeneral.add(new IntSetting.Builder()
@@ -211,9 +188,59 @@ DevinsTrader extends Module {
     private BlockPos lastTradedPos = null;
     private int merchantScreenTicks = 0;
     private int restockChestDataTicks = 0;
+    private Setting<Boolean> setRestockHere;
+    private Setting<Boolean> setExportHere;
+    private BlockPos getPosFromString(String s) {
+        String[] p = s.split(",");
+        if (p.length != 3) throw new IllegalArgumentException("Expected x,y,z but got '"+s+"'");
+        try {
+            int x = Integer.parseInt(p[0].trim());
+            int y = Integer.parseInt(p[1].trim());
+            int z = Integer.parseInt(p[2].trim());
+            return new BlockPos(x, y, z);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Bad number in pos: '"+s+"'", e);
+        }
+    }
 
     public DevinsTrader() {
-        super(DevinsAddon.CATEGORY, "DevinsTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
+        super(DevinsAddon.CATEGORY, "AutoTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
+        setRestockHere = sgGeneral.add(new BoolSetting.Builder()
+            .name("set-restock-here")
+            .description("🔵 Look at a chest block and toggle to save restock coords")
+            .defaultValue(false)
+            .onChanged(enabled -> {
+                if (!enabled) return;
+                if (mc.crosshairTarget instanceof BlockHitResult hit) {
+                    BlockPos p = hit.getBlockPos();
+                    restockChestPos.set(p.getX()+","+p.getY()+","+p.getZ());
+                    ChatUtils.info("✅ Restock chest set to " + restockChestPos.get());
+                } else {
+                    ChatUtils.error("👀 Look at a chest block first!");
+                }
+                setRestockHere.set(false);
+            })
+            .build()
+        );
+
+
+        setExportHere = sgGeneral.add(new BoolSetting.Builder()
+            .name("set-export-here")
+            .description("🟢 Look at a chest block and toggle to save export coords")
+            .defaultValue(false)
+            .onChanged(enabled -> {
+                if (!enabled) return;
+                if (mc.crosshairTarget instanceof BlockHitResult hit) {
+                    BlockPos p = hit.getBlockPos();
+                    exportChestPos.set(p.getX()+","+p.getY()+","+p.getZ());
+                    ChatUtils.info("✅ Export chest set to " + exportChestPos.get());
+                } else {
+                    ChatUtils.error("👀 Look at a chest block first!");
+                }
+                setExportHere.set(false);
+            })
+            .build()
+        );
     }
 
     private void log(String message) {
@@ -403,7 +430,24 @@ DevinsTrader extends Module {
             checkBaritoneStuck();
         }
     }
-
+    private void saveRestockPos() {
+        if (mc.crosshairTarget instanceof BlockHitResult hit) {
+            BlockPos p = hit.getBlockPos();
+            restockChestPos.set(p.getX()+","+p.getY()+","+p.getZ());
+            ChatUtils.info("✅ Restock chest set to " + restockChestPos.get());
+        } else {
+            ChatUtils.error("👀 Look at a chest block first!");
+        }
+    }
+    private void saveExportPos() {
+        if (mc.crosshairTarget instanceof BlockHitResult hit) {
+            BlockPos p = hit.getBlockPos();
+            exportChestPos.set(p.getX()+","+p.getY()+","+p.getZ());
+            ChatUtils.info("✅ Export chest set to " + exportChestPos.get());
+        } else {
+            ChatUtils.error("👀 Look at a chest block first!");
+        }
+    }
     private void interactAura() {
         double interactSq = interactionRange.get() * interactionRange.get();
 
@@ -455,7 +499,6 @@ DevinsTrader extends Module {
             baritone.getCustomGoalProcess().onLostControl();
 
             if (horizSq > interactSq) {
-                if (debugChat.get()) log("Baritone → path to " + pos);
                 Vec3d center = new Vec3d(target.getX(), target.getY(), target.getZ());
                 baritone.getCustomGoalProcess().setGoalAndPath(new Goal() {
                     @Override public boolean isInGoal(int x, int y, int z) {
@@ -492,7 +535,7 @@ DevinsTrader extends Module {
     }
 
     private void startExport() {
-        BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
+        BlockPos pos = getPosFromString(exportChestPos.get());
         if (!useBaritone.get()) {
             ChatUtils.error("Export requires Baritone!");
             return;
@@ -549,7 +592,7 @@ DevinsTrader extends Module {
         if (bar.getCustomGoalProcess().isActive()) return;
 
         if (awaitingExportChestOpen && !hasOpenedExportChest) {
-            BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
+            BlockPos pos = getPosFromString(exportChestPos.get());
             BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
             mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
                 PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
@@ -595,12 +638,12 @@ DevinsTrader extends Module {
         ChatUtils.info("Exported " + deposited + " stacks of " + buyItem.get());
 
         if (useBaritone.get() && lastTradedPos != null) {
-                        bar.getCustomGoalProcess().onLostControl();
-                        bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(
-                                lastTradedPos,
-                                (int) Math.ceil(interactionRange.get())
-                                ));
-                    }
+            bar.getCustomGoalProcess().onLostControl();
+            bar.getCustomGoalProcess().setGoalAndPath(new GoalNear(
+                lastTradedPos,
+                (int) Math.ceil(interactionRange.get())
+            ));
+        }
     }
 
     @EventHandler
@@ -615,7 +658,7 @@ DevinsTrader extends Module {
 
 
         if (awaitingExportChestOpen) {
-            BlockPos pos = new BlockPos(exportChestX.get(), exportChestY.get(), exportChestZ.get());
+            BlockPos pos = getPosFromString(exportChestPos.get());
             BlockHitResult hit = new BlockHitResult(
                 pos.toCenterPos(),
                 Direction.UP,
@@ -798,8 +841,7 @@ DevinsTrader extends Module {
     }
 
     private void startRestock() {
-        BlockPos chestPos = new BlockPos(chestX.get(), chestY.get(), chestZ.get());
-        if (!useBaritone.get()) {
+        BlockPos chestPos = getPosFromString(restockChestPos.get());        if (!useBaritone.get()) {
             ChatUtils.error("Restock requires Baritone enabled!");
             return;
         }
@@ -819,9 +861,8 @@ DevinsTrader extends Module {
         var bar = BaritoneAPI.getProvider().getPrimaryBaritone();
         if (bar.getCustomGoalProcess().isActive()) return;
 
-        // 1) Open the chest if we haven’t yet
         if (!hasOpenedChest && awaitingRestockChestOpen) {
-            BlockPos pos = new BlockPos(chestX.get(), chestY.get(), chestZ.get());
+            BlockPos pos = getPosFromString(restockChestPos.get());
             BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
 
             mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
@@ -838,7 +879,6 @@ DevinsTrader extends Module {
             return;
         }
 
-        // 2) Wait for the chest GUI to actually open
         if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler)) {
             restockChestWaitTicks++;
             if (restockChestWaitTicks > CHEST_SCREEN_OPEN_TIMEOUT) {
@@ -848,12 +888,10 @@ DevinsTrader extends Module {
             return;
         }
 
-        // At this point the GUI is open – grab the handler
         GenericContainerScreenHandler chest =
             (GenericContainerScreenHandler) mc.player.currentScreenHandler;
         int syncId = chest.syncId;
 
-        // 3) Collect emerald‐block and emerald slots (in chest & player inv)
         List<Integer> blockSlots   = new ArrayList<>();
         List<Integer> emeraldSlots = new ArrayList<>();
         for (int i = 0; i < chest.slots.size(); i++) {
@@ -862,7 +900,6 @@ DevinsTrader extends Module {
             else if (item == Items.EMERALD)       emeraldSlots.add(i);
         }
 
-        // 4) WAIT FOR SERVER TO POPULATE the CHEST CONTENTS
         int containerSize = chest.getRows() * 9;
         boolean gotData = false;
         for (int i = 0; i < containerSize; i++) {
@@ -872,15 +909,12 @@ DevinsTrader extends Module {
             }
         }
 
-        // If we either haven’t seen any items yet, OR we see no emeralds/blocks,
-        // treat it like the merchant-offer logic: wait until timeout, then disable.
         if (!gotData || (blockSlots.isEmpty() && emeraldSlots.isEmpty())) {
             restockChestDataTicks++;
             if (restockChestDataTicks < CHEST_SCREEN_OPEN_TIMEOUT) {
-                return; // still waiting for data or legitimately empty
+                return;
             }
 
-            // after waiting, assume empty → disable
             mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
             ChatUtils.error("❌ No emeralds or emerald blocks left in restock chest – disabling DevinsTrader.");
             toggle();
@@ -889,10 +923,8 @@ DevinsTrader extends Module {
             return;
         }
 
-        // 5) We got chest data and found emeralds/blocks → reset and proceed
         restockChestDataTicks = 0;
 
-        // Move up to `restockStacks` stacks into your inventory
         int taken = 0;
         for (int slot : blockSlots) {
             if (taken >= restockStacks.get()) break;
@@ -905,7 +937,6 @@ DevinsTrader extends Module {
             taken++;
         }
 
-        // 6) Close out
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
         mc.setScreen(null);
         mc.player.closeHandledScreen();
