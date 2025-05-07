@@ -204,7 +204,7 @@ DevinsTrader extends Module {
     }
 
     public DevinsTrader() {
-        super(DevinsAddon.CATEGORY, "AutoTrader", "Trades with villagers using silent rotation logic (start with a stack of Emerald Blocks in inv).");
+        super(DevinsAddon.CATEGORY, "AutoTrader", "Trades with villagers using silent rotation logic.");
         setRestockHere = sgGeneral.add(new BoolSetting.Builder()
             .name("set-restock-here")
             .description("🔵 Look at a chest block and toggle to save restock coords")
