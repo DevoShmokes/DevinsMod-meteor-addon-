@@ -23,5 +23,7 @@ This is just the beginning! The repository will continue to grow with additional
 Contributions are welcome! If you have ideas for new modules or improvements, feel free to open an issue or submit a pull request.
 
 ---
+Discord: devokillz\
+DM me for questions/suggestions
 
 Thank you for checking out **DevinsMod**!
