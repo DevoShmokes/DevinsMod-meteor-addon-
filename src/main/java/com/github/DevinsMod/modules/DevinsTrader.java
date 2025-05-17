@@ -37,7 +37,6 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.village.TradeOffer;
 import net.minecraft.village.TradeOfferList;
 import net.minecraft.village.VillagerProfession;
-
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -180,11 +179,11 @@ DevinsTrader extends Module {
     private boolean awaitingExportChestOpen = false;
     private Integer firstVillagerId = null;
     private Vec3d firstVillagerPos = null;
-    private static final int TRADE_SCREEN_OFFER_TIMEOUT = 60;
+    private static final int TRADE_SCREEN_OFFER_TIMEOUT = 1000;
     private int restockChestWaitTicks = 40;
     private boolean awaitingRestockChestOpen = false;
     private int exportChestWaitTicks = 0;
-    private static final int CHEST_SCREEN_OPEN_TIMEOUT = 40;
+    private static final int CHEST_SCREEN_OPEN_TIMEOUT = 1000;
     private BlockPos lastTradedPos = null;
     private int merchantScreenTicks = 0;
     private int restockChestDataTicks = 0;
