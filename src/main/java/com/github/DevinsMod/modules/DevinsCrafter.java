@@ -265,11 +265,11 @@ public class DevinsCrafter extends Module {
 
     private void moveTo(BlockPos pos) {
         BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().onLostControl();
-        BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, 1));
+        BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, 3));
     }
 
     private boolean isAt(BlockPos pos) {
-        return mc.player.getBlockPos().isWithinDistance(pos, 1.2);
+        return mc.player.getBlockPos().isWithinDistance(pos, 3);
     }
 
     private void openChest(BlockPos pos) {
