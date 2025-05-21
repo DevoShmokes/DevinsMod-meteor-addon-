@@ -248,27 +248,52 @@ DevinsTrader extends Module {
 
     @Override
     public void onActivate() {
+        // === Core interaction/reset state ===
         interactedVillagers.clear();
         tradedVillagersPermanent.clear();
-        tradeCooldown = interactionCooldown = 0;
+        tradeCooldown = 0;
+        interactionCooldown = 0;
         interactionsThisTick = 0;
         currentVillager = null;
-        currentYLevel = mc.player.getBlockPos().getY();
+
+        // === Rotation ===
         rotationRequest.setActive(false);
-        lastPlayerPos = mc.player.getPos();
-        lastGoalPos = null;
-        stuckTicks = 0;
-        stuckAttempts = 0;
-        nudgeTicksRemaining = 0;
         RotationManager.requests.add(rotationRequest);
 
-        firstVillagerId = null;
-        firstVillagerPos = null;
+        // === Position & pathing tracking ===
+        currentYLevel     = mc.player.getBlockPos().getY();
+        lastPlayerPos     = mc.player.getPos();
+        lastGoalPos       = null;
+        stuckTicks        = 0;
+        stuckAttempts     = 0;
+        nudgeTicksRemaining = 0;
+        nudgeElapsed        = 0;
 
+        // === UI/screen timeouts ===
+        merchantScreenTicks   = 0;
+        tradeScreenOpenTicks  = 0;
+        restockChestDataTicks = 0;
+        restockChestWaitTicks = 0;
+        exportChestWaitTicks  = 0;
+
+        // === Chest/export flags ===
+        isRestocking             = false;
+        hasOpenedChest           = false;
+        awaitingRestockChestOpen = false;
+        isExporting              = false;
+        hasOpenedExportChest     = false;
+        awaitingExportChestOpen  = false;
+
+        // === First-villager tracking ===
+        firstVillagerId  = null;
+        firstVillagerPos = null;
+        lastTradedPos    = null;
+
+        // === Baritone setup ===
         if (useBaritone.get()) {
             var baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
-            BaritoneAPI.getSettings().allowBreak.value = false;
-            BaritoneAPI.getSettings().allowPlace.value = false;
+            BaritoneAPI.getSettings().allowBreak.value   = false;
+            BaritoneAPI.getSettings().allowPlace.value   = false;
             BaritoneAPI.getSettings().allowParkour.value = true;
             baritone.getCustomGoalProcess().onLostControl();
         }

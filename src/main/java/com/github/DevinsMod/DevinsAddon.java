@@ -1,5 +1,6 @@
 package com.github.DevinsMod;
 
+import com.github.DevinsMod.modules.DevinsCrafter;
 import com.github.DevinsMod.modules.DevinsTrader;
 import com.github.DevinsMod.modules.RotationManager;
 import com.mojang.logging.LogUtils;
@@ -18,6 +19,7 @@ public class DevinsAddon extends MeteorAddon {
         LOG.info("Initializing DevinsMod");
 
         // Modules
+        Modules.get().add(new DevinsCrafter());
         Modules.get().add(new DevinsTrader());
         Modules.get().add(new RotationManager());
     }

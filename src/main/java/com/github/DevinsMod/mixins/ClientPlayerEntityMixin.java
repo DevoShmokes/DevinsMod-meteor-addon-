@@ -118,7 +118,9 @@ public class ClientPlayerEntityMixin {
                 }
 
 
-                networkHandler.sendPacket(packet);
+                if (packet != null) {
+                           networkHandler.sendPacket(packet);
+                       }
 
 
                 if (shouldUpdatePosition) {
