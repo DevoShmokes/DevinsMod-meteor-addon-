@@ -33,6 +33,8 @@ import java.util.stream.Collectors;
 public class DevinsCrafter extends Module {
     private enum State {IDLE, FETCH, CRAFT, EXPORT, RETURN}
 
+    private static final long TIMEOUT_MS = 500; // 5 seconds
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
     private final Setting<List<Item>> fetchItems = sgGeneral.add(
@@ -135,9 +137,12 @@ public class DevinsCrafter extends Module {
 
     private int nextChestSlot = 0;
     private int cooldown = 0;
-    private long actionWindowStart = System.currentTimeMillis();
+    private long actionWindowStart = 0;
     private int invActions = 0;
     private State state = State.IDLE;
+
+    // Tracks last activity time
+    private long lastProgressTime = 0;
 
     public DevinsCrafter() {
         super(DevinsAddon.CATEGORY, "DevinsCrafter", "Automates fetch → craft → selective export.");
@@ -153,27 +158,59 @@ public class DevinsCrafter extends Module {
         actionWindowStart = System.currentTimeMillis();
         invActions = 0;
         state = State.IDLE;
+        lastProgressTime = System.currentTimeMillis();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (!Utils.canUpdate() || mc.interactionManager == null || targets.get().isEmpty()) return;
+
+        // Watchdog: skip if Baritone is actively pathing
+        if (!isBaritonePathing()) checkStuck();
+
         if (cooldown > 0) {
             cooldown--;
             return;
         }
+
         if (!autoMode.get()) {
             manualTick();
-            return;
+        } else {
+            autoModeTick();
         }
-        autoModeTick();
+    }
+
+    private boolean isBaritonePathing() {
+        return BaritoneAPI.getProvider()
+            .getPrimaryBaritone()
+            .getPathingBehavior()
+            .isPathing();
+    }
+
+    private void checkStuck() {
+        long now = System.currentTimeMillis();
+        if (now - lastProgressTime > TIMEOUT_MS) {
+            resetCycle();
+            lastProgressTime = now;
+        }
+    }
+
+    private void resetCycle() {
+        openedFarmChest = false;
+        openedCraftTable = false;
+        openedExportChest = false;
+        nextChestSlot = 0;
+        state = State.IDLE;
     }
 
     private void autoModeTick() {
         switch (state) {
             case IDLE:
-                if (isAt(farmChestPos.get())) state = State.FETCH;
-                else moveTo(farmChestPos.get());
+                if (isAt(farmChestPos.get())) {
+                    state = State.FETCH;
+                } else {
+                    moveTo(farmChestPos.get());
+                }
                 break;
 
             case FETCH:
@@ -181,17 +218,19 @@ public class DevinsCrafter extends Module {
                 if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler h)) return;
                 long expectedSlots = h.getRows() * 9L;
                 long loadedSlots = h.slots.stream().filter(s -> s.inventory != mc.player.getInventory()).count();
-                if (loadedSlots < expectedSlots) return; // wait for server to send chest contents
+                if (loadedSlots < expectedSlots) return;
+
                 int slots = h.getRows() * 9;
                 while (nextChestSlot < slots) {
                     Slot s = h.slots.get(nextChestSlot++);
                     if (s.hasStack() && fetchItems.get().contains(s.getStack().getItem()) && hasEmptyInvSlot() && clickSlot(h.syncId, s.id)) return;
                 }
+
                 closeContainer(h.syncId);
                 openedFarmChest = false;
                 nextChestSlot = 0;
                 state = State.CRAFT;
-                moveTo(craftingTablePos.get());
+                if (!isAt(craftingTablePos.get())) moveTo(craftingTablePos.get());
                 break;
 
             case CRAFT:
@@ -202,7 +241,7 @@ public class DevinsCrafter extends Module {
                 mc.player.closeHandledScreen();
                 openedCraftTable = false;
                 state = State.EXPORT;
-                moveTo(exportChestPos.get());
+                if (!isAt(exportChestPos.get())) moveTo(exportChestPos.get());
                 break;
 
             case EXPORT:
@@ -220,7 +259,7 @@ public class DevinsCrafter extends Module {
                 closeContainer(h2.syncId);
                 openedExportChest = false;
                 state = State.RETURN;
-                moveTo(farmChestPos.get());
+                if (!isAt(farmChestPos.get())) moveTo(farmChestPos.get());
                 break;
 
             case RETURN:
@@ -233,6 +272,7 @@ public class DevinsCrafter extends Module {
         if (!canPerformAction()) return false;
         mc.interactionManager.clickSlot(syncId, slotId, 0, SlotActionType.QUICK_MOVE, mc.player);
         cooldown = delay.get();
+        lastProgressTime = System.currentTimeMillis();
         return true;
     }
 
@@ -240,6 +280,7 @@ public class DevinsCrafter extends Module {
         if (!openedFlag.getAsBoolean()) {
             setter.run();
             openChest(pos);
+            lastProgressTime = System.currentTimeMillis();
             return true;
         }
         return false;
@@ -248,6 +289,7 @@ public class DevinsCrafter extends Module {
     private void closeContainer(int syncId) {
         mc.player.networkHandler.sendPacket(new CloseHandledScreenC2SPacket(syncId));
         mc.player.closeHandledScreen();
+        lastProgressTime = System.currentTimeMillis();
     }
 
     private boolean canPerformAction() {
@@ -266,6 +308,7 @@ public class DevinsCrafter extends Module {
     private void moveTo(BlockPos pos) {
         BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().onLostControl();
         BaritoneAPI.getProvider().getPrimaryBaritone().getCustomGoalProcess().setGoalAndPath(new GoalNear(pos, 3));
+        lastProgressTime = System.currentTimeMillis();
     }
 
     private boolean isAt(BlockPos pos) {
@@ -291,9 +334,11 @@ public class DevinsCrafter extends Module {
         if (recipes.isEmpty()) return true;
         if (!canPerformAction()) return false;
         mc.interactionManager.clickRecipe(h.syncId, recipes.get(0).id(), shiftCraft.get());
+        lastProgressTime = System.currentTimeMillis();
         if (!canPerformAction()) return false;
         mc.interactionManager.clickSlot(h.syncId, 0, 0, SlotActionType.QUICK_MOVE, mc.player);
         cooldown = delay.get();
+        lastProgressTime = System.currentTimeMillis();
         return false;
     }
 
