@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
 public class DevinsCrafter extends Module {
     private enum State {IDLE, FETCH, CRAFT, EXPORT, RETURN}
 
-    private static final long TIMEOUT_MS = 500; // 5 seconds
+    private static final long TIMEOUT_MS = 500; // 0.5 seconds
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -86,6 +86,20 @@ public class DevinsCrafter extends Module {
             .defaultValue(false)
             .build()
     );
+
+    // ——— NEW: Chest-open rate limit ———
+    private final Setting<Integer> chestOpenLimit = sgGeneral.add(
+        new IntSetting.Builder()
+            .name("chest-open-per-second")
+            .description("Maximum number of chest opens per second.")
+            .defaultValue(5)
+            .min(1)
+            .sliderMax(20)
+            .build()
+    );
+    private long chestOpenWindowStart = 0;
+    private int chestOpenActions = 0;
+    // ——————————————————————————————
 
     private final Setting<Boolean> autoMode = sgGeneral.add(
         new BoolSetting.Builder()
@@ -159,6 +173,8 @@ public class DevinsCrafter extends Module {
         invActions = 0;
         state = State.IDLE;
         lastProgressTime = System.currentTimeMillis();
+        chestOpenWindowStart = System.currentTimeMillis();
+        chestOpenActions = 0;
     }
 
     @EventHandler
@@ -214,7 +230,8 @@ public class DevinsCrafter extends Module {
                 break;
 
             case FETCH:
-                if (openContainerOnce(() -> openedFarmChest, () -> openedFarmChest = true, farmChestPos.get())) return;
+                // throttle only chests
+                if (openChestThrottled(() -> openedFarmChest, () -> openedFarmChest = true, farmChestPos.get())) return;
                 if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler h)) return;
                 long expectedSlots = h.getRows() * 9L;
                 long loadedSlots = h.slots.stream().filter(s -> s.inventory != mc.player.getInventory()).count();
@@ -235,6 +252,7 @@ public class DevinsCrafter extends Module {
 
             case CRAFT:
                 if (!isAt(craftingTablePos.get())) return;
+                // no throttle on crafting table
                 if (openContainerOnce(() -> openedCraftTable, () -> openedCraftTable = true, craftingTablePos.get())) return;
                 if (!(mc.player.currentScreenHandler instanceof CraftingScreenHandler)) return;
                 if (!craftTick()) return;
@@ -246,7 +264,8 @@ public class DevinsCrafter extends Module {
 
             case EXPORT:
                 if (!isAt(exportChestPos.get())) return;
-                if (openContainerOnce(() -> openedExportChest, () -> openedExportChest = true, exportChestPos.get())) return;
+                // throttle only chests
+                if (openChestThrottled(() -> openedExportChest, () -> openedExportChest = true, exportChestPos.get())) return;
                 if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler h2)) return;
                 boolean moved = false;
                 for (Slot s : h2.slots) {
@@ -276,8 +295,21 @@ public class DevinsCrafter extends Module {
         return true;
     }
 
+    // original openContainerOnce, no throttle
     private boolean openContainerOnce(BooleanSupplier openedFlag, Runnable setter, BlockPos pos) {
         if (!openedFlag.getAsBoolean()) {
+            setter.run();
+            openChest(pos);
+            lastProgressTime = System.currentTimeMillis();
+            return true;
+        }
+        return false;
+    }
+
+    // new helper for chest-open throttle
+    private boolean openChestThrottled(BooleanSupplier openedFlag, Runnable setter, BlockPos pos) {
+        if (!openedFlag.getAsBoolean()) {
+            if (!canOpenChestAction()) return true;
             setter.run();
             openChest(pos);
             lastProgressTime = System.currentTimeMillis();
@@ -299,6 +331,15 @@ public class DevinsCrafter extends Module {
             invActions = 0;
         }
         return ++invActions <= 100;
+    }
+
+    private boolean canOpenChestAction() {
+        long now = System.currentTimeMillis();
+        if (now - chestOpenWindowStart > 1000) {
+            chestOpenWindowStart = now;
+            chestOpenActions = 0;
+        }
+        return chestOpenActions++ < chestOpenLimit.get();
     }
 
     private boolean hasEmptyInvSlot() {
