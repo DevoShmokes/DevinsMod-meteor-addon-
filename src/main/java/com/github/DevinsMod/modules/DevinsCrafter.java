@@ -15,6 +15,7 @@ import net.minecraft.recipe.RecipeDisplayEntry;
 import net.minecraft.recipe.display.SlotDisplayContexts;
 import net.minecraft.screen.CraftingScreenHandler;
 import net.minecraft.screen.GenericContainerScreenHandler;
+import net.minecraft.screen.ShulkerBoxScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
@@ -31,7 +32,7 @@ import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 
 public class DevinsCrafter extends Module {
-    private enum State {IDLE, FETCH, CRAFT, EXPORT, RETURN}
+    private enum State {IDLE, FETCH, FETCH2, CRAFT, EXPORT, RETURN}
 
     private static final long TIMEOUT_MS = 500; // 0.5 seconds
 
@@ -41,6 +42,14 @@ public class DevinsCrafter extends Module {
         new ItemListSetting.Builder()
             .name("fetch-items")
             .description("Only these items will be pulled from the farm chest.")
+            .defaultValue(Collections.emptyList())
+            .build()
+    );
+
+    private final Setting<List<Item>> fetchItems2 = sgGeneral.add(
+        new ItemListSetting.Builder()
+            .name("fetch-items-2")
+            .description("Items to pull from the second farm chest.")
             .defaultValue(Collections.emptyList())
             .build()
     );
@@ -101,6 +110,26 @@ public class DevinsCrafter extends Module {
     private int chestOpenActions = 0;
     // ——————————————————————————————
 
+    private final Setting<Integer> stacksToFetch = sgGeneral.add(
+        new IntSetting.Builder()
+            .name("stacks-to-fetch-1")
+            .description("How many stacks to take from the first farm chest per cycle.")
+            .defaultValue(1)
+            .min(1)
+            .sliderMax(27)
+            .build()
+    );
+
+    private final Setting<Integer> stacksToFetch2 = sgGeneral.add(
+        new IntSetting.Builder()
+            .name("stacks-to-fetch-2")
+            .description("How many stacks to take from the second farm chest per cycle.")
+            .defaultValue(1)
+            .min(1)
+            .sliderMax(27)
+            .build()
+    );
+
     private final Setting<Boolean> autoMode = sgGeneral.add(
         new BoolSetting.Builder()
             .name("auto-mode")
@@ -113,6 +142,14 @@ public class DevinsCrafter extends Module {
         new BlockPosSetting.Builder()
             .name("farm-chest-pos")
             .description("Where to pull raw items from.")
+            .defaultValue(BlockPos.ORIGIN)
+            .build()
+    );
+
+    private final Setting<BlockPos> farmChest2Pos = sgGeneral.add(
+        new BlockPosSetting.Builder()
+            .name("farm-chest-2-pos")
+            .description("Where to pull raw items from (second chest).")
             .defaultValue(BlockPos.ORIGIN)
             .build()
     );
@@ -137,6 +174,10 @@ public class DevinsCrafter extends Module {
         newPositionSetter("set-farm-here", farmChestPos, "farm chest").build()
     );
 
+    private final Setting<Boolean> setFarm2Here = sgGeneral.add(
+        newPositionSetter("set-farm-2-here", farmChest2Pos, "second farm chest").build()
+    );
+
     private final Setting<Boolean> setCraftHere = sgGeneral.add(
         newPositionSetter("set-craft-here", craftingTablePos, "crafting table").build()
     );
@@ -145,11 +186,21 @@ public class DevinsCrafter extends Module {
         newPositionSetter("set-export-here", exportChestPos, "export chest").build()
     );
 
+    private final Setting<Boolean> enableFarmChest2 = sgGeneral.add(
+        new BoolSetting.Builder()
+            .name("enable-farm-chest-2")
+            .description("Enable fetching from the second farm chest.")
+            .defaultValue(false)
+            .build()
+    );
+
     private boolean openedFarmChest = false;
+    private boolean openedFarmChest2 = false;
     private boolean openedCraftTable = false;
     private boolean openedExportChest = false;
 
     private int nextChestSlot = 0;
+    private int nextChestSlot2 = 0;
     private int cooldown = 0;
     private long actionWindowStart = 0;
     private int invActions = 0;
@@ -158,6 +209,12 @@ public class DevinsCrafter extends Module {
     // Tracks last activity time
     private long lastProgressTime = 0;
 
+    private int stacksFetched = 0; // Track across ticks
+    private int stacksFetched2 = 0; // Track across ticks
+
+    private boolean waitingForFetch2 = false;
+    private long fetch2WaitTimer = 0;
+
     public DevinsCrafter() {
         super(DevinsAddon.CATEGORY, "DevinsCrafter", "Automates fetch → craft → selective export.");
     }
@@ -165,9 +222,11 @@ public class DevinsCrafter extends Module {
     @Override
     public void onActivate() {
         openedFarmChest = false;
+        openedFarmChest2 = false;
         openedCraftTable = false;
         openedExportChest = false;
         nextChestSlot = 0;
+        nextChestSlot2 = 0;
         cooldown = 0;
         actionWindowStart = System.currentTimeMillis();
         invActions = 0;
@@ -175,14 +234,23 @@ public class DevinsCrafter extends Module {
         lastProgressTime = System.currentTimeMillis();
         chestOpenWindowStart = System.currentTimeMillis();
         chestOpenActions = 0;
+        stacksFetched = 0;
+        stacksFetched2 = 0;
+        waitingForFetch2 = false;
+        fetch2WaitTimer = 0;
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (!Utils.canUpdate() || mc.interactionManager == null || targets.get().isEmpty()) return;
 
-        // Watchdog: skip if Baritone is actively pathing
-        if (!isBaritonePathing()) checkStuck();
+        boolean pathing = isBaritonePathing();
+        if (pathing) {
+            // keep watchdog fresh while Baritone is moving so we don't reset to IDLE mid-route
+            lastProgressTime = System.currentTimeMillis();
+        } else {
+            checkStuck();
+        }
 
         if (cooldown > 0) {
             cooldown--;
@@ -213,76 +281,278 @@ public class DevinsCrafter extends Module {
 
     private void resetCycle() {
         openedFarmChest = false;
+        openedFarmChest2 = false;
         openedCraftTable = false;
         openedExportChest = false;
         nextChestSlot = 0;
+        nextChestSlot2 = 0;
         state = State.IDLE;
     }
 
+    private boolean storeExportItemsIfPresent() {
+        // Check if any export items are in inventory
+        boolean hasExport = mc.player.getInventory().main.stream().anyMatch(st -> exportItems.get().contains(st.getItem()) && !st.isEmpty());
+        if (!hasExport) return false;
+        if (!isAt(exportChestPos.get())) {
+            moveTo(exportChestPos.get());
+            return true; // block state machine until at chest
+        }
+        // Open chest if not already open
+        if (openChestThrottled(() -> openedExportChest, () -> openedExportChest = true, exportChestPos.get())) return true;
+        var handler = mc.player.currentScreenHandler;
+        if (!(handler instanceof GenericContainerScreenHandler) && !(handler instanceof ShulkerBoxScreenHandler)) return true;
+        boolean moved = false;
+        for (Slot s : handler.slots) {
+            if (s.inventory == mc.player.getInventory() && s.hasStack() && exportItems.get().contains(s.getStack().getItem()) && clickSlot(handler.syncId, s.id)) {
+                moved = true;
+            }
+        }
+        // If nothing left to move, close chest
+        boolean stillHasExport = mc.player.getInventory().main.stream().anyMatch(st -> exportItems.get().contains(st.getItem()) && !st.isEmpty());
+        if (!stillHasExport) {
+            closeContainer(handler.syncId);
+            openedExportChest = false;
+        }
+        return true; // block state machine until all export items are stored
+    }
+
     private void autoModeTick() {
+        // Only store export items after crafting is done (EXPORT, RETURN, IDLE)
+        if (state == State.EXPORT || state == State.RETURN || state == State.IDLE) {
+            if (storeExportItemsIfPresent()) return;
+        }
+
         switch (state) {
             case IDLE:
+                ChatUtils.info("[DevinsCrafter] State: IDLE");
                 if (isAt(farmChestPos.get())) {
                     state = State.FETCH;
+                    ChatUtils.info("[DevinsCrafter] Transition: IDLE -> FETCH");
                 } else {
                     moveTo(farmChestPos.get());
+                    ChatUtils.info("[DevinsCrafter] Moving to farm chest 1");
                 }
                 break;
 
             case FETCH:
-                // throttle only chests
-                if (openChestThrottled(() -> openedFarmChest, () -> openedFarmChest = true, farmChestPos.get())) return;
-                if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler h)) return;
-                long expectedSlots = h.getRows() * 9L;
-                long loadedSlots = h.slots.stream().filter(s -> s.inventory != mc.player.getInventory()).count();
+                ChatUtils.info("[DevinsCrafter] State: FETCH");
+
+                // ---------- MOD BLOCK (skip fetch when inventory already has fetch-items) ----------
+                boolean alreadyHaveFetch = mc.player.getInventory().main.stream()
+                    .anyMatch(st -> !st.isEmpty() && fetchItems.get().contains(st.getItem()));
+                if (alreadyHaveFetch) {
+                    ChatUtils.info("[DevinsCrafter] Inventory already contains fetch items – skipping FETCH");
+
+                    openedFarmChest = false;
+                    nextChestSlot = 0;
+                    stacksFetched = 0;
+
+                    if (enableFarmChest2.get()) {
+                        state = State.FETCH2;
+                        ChatUtils.info("[DevinsCrafter] Transition: FETCH(SKIP) -> FETCH2");
+                        if (!isAt(farmChest2Pos.get())) {
+                            moveTo(farmChest2Pos.get());
+                            ChatUtils.info("[DevinsCrafter] Moving to farm chest 2");
+                        }
+                    } else {
+                        state = State.CRAFT;
+                        ChatUtils.info("[DevinsCrafter] Transition: FETCH(SKIP) -> CRAFT");
+                        if (!isAt(craftingTablePos.get())) {
+                            moveTo(craftingTablePos.get());
+                            ChatUtils.info("[DevinsCrafter] Moving to crafting table");
+                        }
+                    }
+                    break;
+                }
+                // ---------- END MOD BLOCK ----------
+
+                if (openChestThrottled(() -> openedFarmChest, () -> openedFarmChest = true, farmChestPos.get())) {
+                    ChatUtils.info("[DevinsCrafter] Opening farm chest 1");
+                    return;
+                }
+                var handler = mc.player.currentScreenHandler;
+                if (!(handler instanceof GenericContainerScreenHandler) && !(handler instanceof ShulkerBoxScreenHandler)) return;
+                int rows;
+                if (handler instanceof GenericContainerScreenHandler g) {
+                    rows = g.getRows();
+                } else {
+                    rows = 3; // Shulker boxes always have 3 rows
+                }
+                long expectedSlots = rows * 9L;
+                long loadedSlots = handler.slots.stream().filter(s -> s.inventory != mc.player.getInventory()).count();
                 if (loadedSlots < expectedSlots) return;
 
-                int slots = h.getRows() * 9;
-                while (nextChestSlot < slots) {
-                    Slot s = h.slots.get(nextChestSlot++);
-                    if (s.hasStack() && fetchItems.get().contains(s.getStack().getItem()) && hasEmptyInvSlot() && clickSlot(h.syncId, s.id)) return;
+                int slots = rows * 9;
+                boolean couldFetchFetch = false;
+                while (nextChestSlot < slots && stacksFetched < stacksToFetch.get()) {
+                    Slot s = handler.slots.get(nextChestSlot++);
+                    if (s.hasStack() && fetchItems.get().contains(s.getStack().getItem()) && hasEmptyInvSlot() && clickSlot(handler.syncId, s.id)) {
+                        stacksFetched++;
+                        couldFetchFetch = true;
+                        ChatUtils.info("[DevinsCrafter] Took stack from farm chest 1, slot " + s.id);
+                    }
                 }
 
-                closeContainer(h.syncId);
-                openedFarmChest = false;
-                nextChestSlot = 0;
-                state = State.CRAFT;
-                if (!isAt(craftingTablePos.get())) moveTo(craftingTablePos.get());
+                if (stacksFetched >= stacksToFetch.get() || nextChestSlot >= slots || !hasEmptyInvSlot() || !couldFetchFetch) {
+                    closeContainer(handler.syncId);
+                    openedFarmChest = false;
+                    nextChestSlot = 0;
+                    stacksFetched = 0;
+                    if (enableFarmChest2.get()) {
+                        state = State.FETCH2;
+                        ChatUtils.info("[DevinsCrafter] Transition: FETCH -> FETCH2");
+                        if (!isAt(farmChest2Pos.get())) {
+                            moveTo(farmChest2Pos.get());
+                            ChatUtils.info("[DevinsCrafter] Moving to farm chest 2");
+                        }
+                    } else {
+                        state = State.CRAFT;
+                        ChatUtils.info("[DevinsCrafter] Transition: FETCH -> CRAFT");
+                        if (!isAt(craftingTablePos.get())) {
+                            moveTo(craftingTablePos.get());
+                            ChatUtils.info("[DevinsCrafter] Moving to crafting table");
+                        }
+                    }
+                }
+                break;
+
+            case FETCH2:
+                ChatUtils.info("[DevinsCrafter] State: FETCH2");
+                ChatUtils.info("[DevinsCrafter] before openedFarmChest2" + openedFarmChest2);
+
+                // ---------- MOD BLOCK (skip fetch2 when inventory already has fetch-items-2) ----------
+                boolean alreadyHaveFetch2 = mc.player.getInventory().main.stream()
+                    .anyMatch(st -> !st.isEmpty() && fetchItems2.get().contains(st.getItem()));
+                if (alreadyHaveFetch2) {
+                    ChatUtils.info("[DevinsCrafter] Inventory already contains fetch-2 items – skipping FETCH2");
+
+                    openedFarmChest2 = false;
+                    nextChestSlot2 = 0;
+                    stacksFetched2 = 0;
+
+                    state = State.CRAFT;
+                    ChatUtils.info("[DevinsCrafter] Transition: FETCH2(SKIP) -> CRAFT");
+                    if (!isAt(craftingTablePos.get())) {
+                        moveTo(craftingTablePos.get());
+                        ChatUtils.info("[DevinsCrafter] Moving to crafting table");
+                    }
+                    break;
+                }
+                // ---------- END MOD BLOCK ----------
+
+                if (isAt(farmChest2Pos.get())) {
+                    if (openChestThrottled(() -> openedFarmChest2, () -> openedFarmChest2 = true, farmChest2Pos.get())) {
+                        ChatUtils.info("[DevinsCrafter] Opening farm chest 2");
+                        ChatUtils.info("[DevinsCrafter] ao openedFarmChest2" + openedFarmChest2);
+
+                        return;
+                    }
+                    ChatUtils.info("[DevinsCrafter] Fetch2 opned");
+
+                    var handler2 = mc.player.currentScreenHandler;
+                    if (!(handler2 instanceof GenericContainerScreenHandler) && !(handler2 instanceof ShulkerBoxScreenHandler)) return;
+                    int rows2;
+                    if (handler2 instanceof GenericContainerScreenHandler g2) {
+                        rows2 = g2.getRows();
+                    } else {
+                        rows2 = 3;
+                    }
+                    long expectedSlots2 = rows2 * 9L;
+                    long loadedSlots2 = handler2.slots.stream().filter(s -> s.inventory != mc.player.getInventory()).count();
+                    if (loadedSlots2 < expectedSlots2) return;
+                    int slots2 = rows2 * 9;
+
+                    boolean couldFetch = false;
+                    int slotsChecked = 0;
+                    while (nextChestSlot2 < slots2 && stacksFetched2 < stacksToFetch2.get()) {
+                        ChatUtils.info("[DevinsCrafter] while loop, nextChestSlot2: " + nextChestSlot2 + ", stacksFetched2: " + stacksFetched2);
+
+                        Slot s2 = handler2.slots.get(nextChestSlot2++);
+                        slotsChecked++;
+                        if (s2.hasStack() && fetchItems2.get().contains(s2.getStack().getItem()) && hasEmptyInvSlot()) {
+                            if (clickSlot(handler2.syncId, s2.id)) {
+                                stacksFetched2++;
+                                couldFetch = true;
+                                ChatUtils.info("[DevinsCrafter] Took stack from farm chest 2, slot " + s2.id);
+                            }
+                        }
+                    }
+
+                    // Fallback: if we checked all slots, or couldn't fetch anything, or inventory is full, always advance
+                    if (stacksFetched2 >= stacksToFetch2.get() || nextChestSlot2 >= slots2 || !hasEmptyInvSlot() || !couldFetch || slotsChecked == 0) {
+                        closeContainer(handler2.syncId);
+                        openedFarmChest2 = false;
+                        nextChestSlot2 = 0;
+                        stacksFetched2 = 0;
+                        state = State.CRAFT;
+                        ChatUtils.info("[DevinsCrafter] Transition: FETCH2 -> CRAFT");
+                        if (!isAt(craftingTablePos.get())) {
+                            moveTo(craftingTablePos.get());
+                            ChatUtils.info("[DevinsCrafter] Moving to crafting table");
+                        }
+                    }
+                } else {
+                    openedFarmChest2 = false;
+                    nextChestSlot2 = 0;
+                    stacksFetched2 = 0;
+                    moveTo(farmChest2Pos.get());
+                    ChatUtils.info("[DevinsCrafter] Moving to farm chest 2");
+                }
                 break;
 
             case CRAFT:
+                ChatUtils.info("[DevinsCrafter] State: CRAFT");
                 if (!isAt(craftingTablePos.get())) return;
-                // no throttle on crafting table
-                if (openContainerOnce(() -> openedCraftTable, () -> openedCraftTable = true, craftingTablePos.get())) return;
+                if (openContainerOnce(() -> openedCraftTable, () -> openedCraftTable = true, craftingTablePos.get())) {
+                    ChatUtils.info("[DevinsCrafter] Opening crafting table");
+                    return;
+                }
                 if (!(mc.player.currentScreenHandler instanceof CraftingScreenHandler)) return;
                 if (!craftTick()) return;
                 mc.player.closeHandledScreen();
                 openedCraftTable = false;
                 state = State.EXPORT;
-                if (!isAt(exportChestPos.get())) moveTo(exportChestPos.get());
+                ChatUtils.info("[DevinsCrafter] Transition: CRAFT -> EXPORT");
+                if (!isAt(exportChestPos.get())) {
+                    moveTo(exportChestPos.get());
+                    ChatUtils.info("[DevinsCrafter] Moving to export chest");
+                }
                 break;
 
             case EXPORT:
+                ChatUtils.info("[DevinsCrafter] State: EXPORT");
                 if (!isAt(exportChestPos.get())) return;
-                // throttle only chests
-                if (openChestThrottled(() -> openedExportChest, () -> openedExportChest = true, exportChestPos.get())) return;
-                if (!(mc.player.currentScreenHandler instanceof GenericContainerScreenHandler h2)) return;
+                if (openChestThrottled(() -> openedExportChest, () -> openedExportChest = true, exportChestPos.get())) {
+                    ChatUtils.info("[DevinsCrafter] Opening export chest");
+                    return;
+                }
+                var handler2 = mc.player.currentScreenHandler;
+                if (!(handler2 instanceof GenericContainerScreenHandler) && !(handler2 instanceof ShulkerBoxScreenHandler)) return;
                 boolean moved = false;
-                for (Slot s : h2.slots) {
-                    if (s.inventory == mc.player.getInventory() && s.hasStack() && exportItems.get().contains(s.getStack().getItem()) && clickSlot(h2.syncId, s.id)) {
+                for (Slot s : handler2.slots) {
+                    if (s.inventory == mc.player.getInventory() && s.hasStack() && exportItems.get().contains(s.getStack().getItem()) && clickSlot(handler2.syncId, s.id)) {
                         moved = true;
+                        ChatUtils.info("[DevinsCrafter] Exported item from slot " + s.id);
                         break;
                     }
                 }
                 if (moved) return;
-                closeContainer(h2.syncId);
+                closeContainer(handler2.syncId);
                 openedExportChest = false;
                 state = State.RETURN;
-                if (!isAt(farmChestPos.get())) moveTo(farmChestPos.get());
+                ChatUtils.info("[DevinsCrafter] Transition: EXPORT -> RETURN");
+                if (!isAt(farmChestPos.get())) {
+                    moveTo(farmChestPos.get());
+                    ChatUtils.info("[DevinsCrafter] Moving to farm chest 1");
+                }
                 break;
 
             case RETURN:
-                if (isAt(farmChestPos.get())) state = State.IDLE;
+                ChatUtils.info("[DevinsCrafter] State: RETURN");
+                if (isAt(farmChestPos.get())) {
+                    state = State.IDLE;
+                    ChatUtils.info("[DevinsCrafter] Transition: RETURN -> IDLE");
+                }
                 break;
         }
     }
@@ -309,7 +579,11 @@ public class DevinsCrafter extends Module {
     // new helper for chest-open throttle
     private boolean openChestThrottled(BooleanSupplier openedFlag, Runnable setter, BlockPos pos) {
         if (!openedFlag.getAsBoolean()) {
+            ChatUtils.info("[DevinsCrafter] CAN ? openChestThrottled");
             if (!canOpenChestAction()) return true;
+
+            ChatUtils.info("[DevinsCrafter] CAN openChestThrottled");
+
             setter.run();
             openChest(pos);
             lastProgressTime = System.currentTimeMillis();
@@ -353,14 +627,13 @@ public class DevinsCrafter extends Module {
     }
 
     private boolean isAt(BlockPos pos) {
-        return mc.player.getBlockPos().isWithinDistance(pos, 3);
+        return mc.player.getBlockPos().isWithinDistance(pos, 8);
     }
 
     private void openChest(BlockPos pos) {
         BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
-        mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN));
-        mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.OFF_HAND, hit, 0));
-        mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN));
+        // Use main hand and standard interaction
+        mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hit, 0));
     }
 
     private boolean craftTick() {

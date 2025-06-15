@@ -618,13 +618,7 @@ DevinsTrader extends Module {
         if (awaitingExportChestOpen && !hasOpenedExportChest) {
             BlockPos pos = getPosFromString(exportChestPos.get());
             BlockHitResult hit = new BlockHitResult(pos.toCenterPos(), Direction.UP, pos, false);
-            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
-            ));
-            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.OFF_HAND, hit, 0));
-            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN
-            ));
+            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hit, 0));
             hasOpenedExportChest = true;
             awaitingExportChestOpen = false;
             ChatUtils.info("Opening export chest…");
@@ -690,15 +684,7 @@ DevinsTrader extends Module {
                 false
             );
 
-            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND,
-                BlockPos.ORIGIN, Direction.DOWN
-            ));
-            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.OFF_HAND, hit, 0));
-            mc.player.networkHandler.sendPacket(new PlayerActionC2SPacket(
-                PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND,
-                BlockPos.ORIGIN, Direction.DOWN
-            ));
+            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hit, 0));
 
             hasOpenedExportChest = true;
             awaitingExportChestOpen = false;
